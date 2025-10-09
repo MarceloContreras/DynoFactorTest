@@ -1,0 +1,42 @@
+car: 
+  T_bc:
+    - [1, 0, 0, 0]
+    - [0, 1, 0, 0]
+    - [0, 0, 1, 0]
+    - [0, 0, 0, 1]
+  params:
+    l: 3.0
+    dt: 0.1
+    v: 10
+    delta: -0.25
+  simulation:
+    n_points: 30
+    n_frames: 40
+  noise:
+    apply: true
+    pose_noise: 0.0005
+    point_noise: 0.05
+
+cam:
+  calibration:
+    - [707.0912,        0, 601.8873]
+    - [       0, 707.0912, 183.1104]
+    - [       0,        0,        1]
+  image_dims:
+    heigh: 376
+    width: 1241
+  T_bc:
+    - [1, 0, 0, 0]
+    - [0, 0, 1, 0]
+    - [0,-1, 0, 0]
+    - [0, 0, 0, 1]
+  simulation:
+    n_points: 150
+    n_frames: 40
+    n_obs: 20
+  noise:
+    apply: false
+    obs_noise: 0.5
+    pose_noise: 0.005
+    point_noise: 0.05
+  
