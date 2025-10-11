@@ -39,7 +39,10 @@ def error_object_motion(this: gtsam.CustomFactor,
                         values: gtsam.Values,
                         jacobians: Optional[List[np.ndarray]]) -> np.ndarray:
     
-    def h(prev_pose:gtsam.Pose3, curr_pose:gtsam.Pose3, prev_point:gtsam.Point3, curr_points:gtsam.Point3):
+    def h(prev_pose:gtsam.Pose3, 
+          curr_pose:gtsam.Pose3, 
+          prev_point:gtsam.Point3, 
+          curr_points:gtsam.Point3):
         return curr_points - (curr_pose*prev_pose.inverse())*prev_point
     
     pose1_key, pose2_key, point1_key, point2_key = this.keys()

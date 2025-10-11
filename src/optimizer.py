@@ -135,7 +135,7 @@ class Optimizer(object):
 
     def run(self):
         self.setup_camera()
-        self.setup_objects()
+        # self.setup_objects()
 
         self.map.viz()
 

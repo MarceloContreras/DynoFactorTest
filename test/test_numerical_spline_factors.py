@@ -4,8 +4,10 @@ import numpy as np
 
 from gtsam import Pose3, Rot3, Point3, Cal3_S2, PinholePoseCal3_S2
 from gtsam.utils.numerical_derivative import numericalDerivative21,numericalDerivative22
+from gtsam.utils.numerical_derivative import numericalDerivative11
 
 def test_reproj_err_jacobian():
+    # Section IV.A
     def h(camera:PinholePoseCal3_S2, point: Point3):
         return camera.project(point)
 
@@ -18,14 +20,13 @@ def test_reproj_err_jacobian():
     K = Cal3_S2(1.0,1.0,0.0,0.0,0.0)
     cam = PinholePoseCal3_S2(T, K)
 
-    # Landmark
+    # Landmark w.r.t {w} frame and {c} frame
     P = Point3(-1.0,0.7,7.5) 
     P_w = np.transpose(np.array([[-1.0,0.7,7.5,1.0]]))
-
-    # Analytic jacobian
     P_c = np.squeeze(T.inverse().matrix()@P_w)
     x,y,z = P_c[0],P_c[1],P_c[2]
     
+    # Analytic jacobian
     dpi_dPc = 1/z * np.array([[1,0,-x/z],
                               [0,1,-y/z]])
     dPc_dT = np.array([[ 0,-z, y,-1, 0, 0],
@@ -36,84 +37,166 @@ def test_reproj_err_jacobian():
     # Numerical jacobian
     numerical_H1 = numericalDerivative21(h, cam, P)
     
-    print(np.allclose(numerical_H1,analytic_H1))
+    assert np.allclose(numerical_H1,analytic_H1)
 
 
 def test_object_motion_jacobian():
-    def h(obj_pose:Pose3, omega:np.ndarray):
+    #! This error actually lacks of the differente between point_k and point_k-1
+    #! but since we are interest just in H@point_k-1 jacobian, we omit the first point
+    # Section IV.B 
+    def h(obj_pose:Pose3, omega_bar:np.ndarray):
         adj = obj_pose.AdjointMap()
-        T = Pose3.Expmap(adj@omega)
+        H = Pose3.Expmap(adj@omega_bar)
         point = Point3(-1.0,0.7,7.5) 
-        return T.transformFrom(point)
+        return H.transformFrom(point)
 
-    # Values from testPose3.cpp
-    R = Rot3.Rodrigues(0.3,0,0) 
-    t = Point3(3.5,-2.2,4.2)      
-    T = Pose3(R,t)  
+    # Values from testPose3.cpp for object pose
+    O_Rot = Rot3.Rodrigues(0.3,0,0) 
+    O_trans = Point3(3.5,-2.2,4.2)      
+    O = Pose3(O_Rot,O_trans)  
 
     # Point
-    point_homo = np.transpose(np.array([-1.0,0.7,7.5,1]))
+    point_homo = np.array([-1.0, 0.7, 7.5, 1])
+    point_homo = np.transpose(point_homo)
 
     # Velocity
-    w = np.transpose(np.array([[0.1,0.1,0.1,-0.1,-0.1,1.0]]))
+    omega_bar = np.array([0.1, 0.1, 0.1, -0.1, -0.1, 1.0])
+    omega_bar = np.transpose(omega_bar)
 
     ## Analytic jacobian
-    AdjT_w = T.AdjointMap()@w
+    AdjO_omega = O.AdjointMap()@omega_bar
 
-    # Jacobian of action w.r.t 
-    T_k = Pose3.Expmap(AdjT_w).matrix()
-    R_k = T_k[:3,:3]
+    # 1. Jacobian of action w.r.t H
+    H = Pose3.Expmap(AdjO_omega).matrix()
+    H_Rot = H[:3,:3]
     skew_P_c = np.array([[      0, -point_homo[2],  point_homo[1]],
                          [ point_homo[2],       0, -point_homo[0]],
                          [-point_homo[1],  point_homo[0],       0]])
-    dPc_dT = np.hstack((-R_k@skew_P_c, R_k))  
+    dPc_dH = np.hstack((-H_Rot@skew_P_c, H_Rot))  
 
-    # Jacobian of Exp(e) w.r.t e
-    dExpMap_de = Pose3.ExpmapDerivative(AdjT_w)
+    # 2. Jacobian of Exp(e) w.r.t (e) (simply Left SE(3) jacobian evaluated at AdjT_w)
+    dExpMap_de = Pose3.ExpmapDerivative(AdjO_omega)
 
-    # Jacobian of Adj w.r.t T
-    dAdj_dT = -T.AdjointMap()@Pose3.adjointMap(w)
+    # 3. Jacobian of Adj w.r.t O (object pose) and omega_bar (generalized velocity)
+    dAdj_dO = -O.AdjointMap() @ Pose3.adjointMap(omega_bar)
+    dAdj_domega = O.AdjointMap()
 
-    # Rule of chain
-    analytic_H1 = dPc_dT@dExpMap_de@dAdj_dT
+    # Final result * Rule of chain
+    analytic_H1 = dPc_dH@dExpMap_de@dAdj_dO
+    analytic_H2 = dPc_dH@dExpMap_de@dAdj_domega
 
     # Numerical Jacobian 
-    numerical_H1 = numericalDerivative21(h, T, w)
+    numerical_H1 = numericalDerivative21(h, O, omega_bar)
+    numerical_H2 = numericalDerivative22(h, O, omega_bar)
+    
+    assert np.allclose(numerical_H1,analytic_H1) and np.allclose(numerical_H2,analytic_H2)
 
-    print(np.allclose(numerical_H1,analytic_H1)) 
+# def test_constraint_factor_v1():
+#     # Section IV.C 
+#     Gx = np.array([[0,0,0,1,0,0]])
+#     Gy = np.array([[0,0,0,0,1,0]])
+#     Gtheta = np.array([[0,0,1,0,0,0]])
 
-def test_constraint_factor():
-    Gx = np.array([[0,0,0,1,0,0]])
-    Gtheta = np.array([[0,0,1,0,0,0]])
+#     def h(pose:Pose3, T_dot:np.ndarray):
+#         tangent = Pose3.Logmap(pose)
+#         vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1) # TODO FIX Problem since this is not a lie algebra        
+#         return np.expand_dims(np.cos(Gtheta@tangent),axis=-1)@Gx@vec
 
-    def h(pose:Pose3, T_dot:np.ndarray):
-        tangent = Pose3.Logmap(pose)
-        vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1) # Problem since this is not a lie algebra        
-        return np.expand_dims(np.cos(Gtheta@tangent),axis=-1)@Gx@vec
+#     # Pose
+#     R = Rot3.Rodrigues(0.3,0.3,0.3) 
+#     t = Point3(3.5,-2.2,4.2)      
+#     T = Pose3(R,t) 
+
+#     # T_dot = omega_hat @ T, omega = [0,0,-0.1,-0.1,-0.1,1.0]
+#     omega_hat = np.array([[   0,-0.1,   0,-0.1],
+#                         [ 0.1,   0,-0.1,-0.1],
+#                         [-0.1, 0.1,   0, 1.0],
+#                         [   0,   0,   0, 1.0]])
+#     T_dot = omega_hat@T.matrix()
+#     vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1)
+    
+#     # Analytic jacobian
+#     dLog_dT = Pose3.LogmapDerivative(T)
+#     analytic_H1 = -Gx@vec@np.expand_dims(np.sin(Gtheta@Pose3.Logmap(T)),axis=-1)@Gtheta@dLog_dT    
+
+#     # Numerical Jacobian 
+#     numerical_H1 = numericalDerivative21(h, T, T_dot)
+ 
+#     assert np.allclose(numerical_H1,analytic_H1)
+
+def test_constraint_factor_v2():
+    # Section IV.C 
+    L = np.zeros((16,6))
+    L[1,5] = 1
+    L[2,4]= -1
+    L[4,5] = -1
+    L[6,3] = 1
+    L[8,4] = 1
+    L[9,3] = -1
+    L[12,0] = 1
+    L[13,1] = 1
+    L[14,2] = 1
 
     # Pose
     R = Rot3.Rodrigues(0.3,0.3,0.3) 
     t = Point3(3.5,-2.2,4.2)      
-    T = Pose3(R,t) 
-
-    # T_dot = omega_hat @ T
-    T_dot = np.array([[   0,-0.1,   0,-0.1],
-                      [ 0.1,   0,-0.1,-0.1],
-                      [-0.1, 0.1,   0, 1.0],
-                      [   0,   0,   0, 1.0]])
-    T_dot = T_dot@T.matrix()
-    vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1)
+    pose = Pose3(R,t) 
     
-    # Analytic jacobian
-    dLog_dt = Pose3.LogmapDerivative(T)
-    analytic_H1 = -Gx@vec@np.expand_dims(np.sin(Gtheta@Pose3.Logmap(T)),axis=-1)@Gtheta@dLog_dt    
+    def h(omega:np.ndarray):
+       dT_dt = np.kron(pose.matrix().T,np.eye(4)) @ L @ omega 
+       return dT_dt
+
+    # T_dot = omega_hat @ T, omega = [0,0,-0.1,-0.1,-0.1,1.0]
+    omega = np.array([[0,0,-0.1,-0.1,-0.1,1.0]])
+    omega = np.transpose(omega)
+    print(omega.shape)
+
+    analytic_H2 = np.kron(pose.matrix().T,np.eye(4)) @ L @ omega
+
+    print(analytic_H2.shape)
 
     # Numerical Jacobian 
-    numerical_H1 = numericalDerivative21(h, T, T_dot)
+    numerical_H2 = numericalDerivative11(h, omega)
  
-    print(np.allclose(numerical_H1,analytic_H1)) 
+    assert np.allclose(numerical_H2,analytic_H2)
+
+# def test_constraint_factor_v2():
+#     # Section IV.C 
+#     Gx = np.array([[0,0,0,1],
+#                    [0,0,0,0],
+#                    [0,0,0,0],
+#                    [0,0,0,0]])
+#     Gy = np.array([[0,0,0,0,1,0]])
+#     g_theta = np.array([[0,0,1,0,0,0]])
+
+#     def h(pose:Pose3, T_dot:np.ndarray):
+#         tangent = Pose3.Logmap(pose)
+#         vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1) # TODO FIX Problem since this is not a lie algebra        
+#         return np.expand_dims(np.cos(Gtheta@tangent),axis=-1)@Gx@vec
+
+#     # Pose
+#     R = Rot3.Rodrigues(0.3,0.3,0.3) 
+#     t = Point3(3.5,-2.2,4.2)      
+#     T = Pose3(R,t) 
+
+#     # T_dot = omega_hat @ T, omega = [0,0,-0.1,-0.1,-0.1,1.0]
+#     omega_hat = np.array([[   0,-0.1,   0,-0.1],
+#                         [ 0.1,   0,-0.1,-0.1],
+#                         [-0.1, 0.1,   0, 1.0],
+#                         [   0,   0,   0, 1.0]])
+#     T_dot = omega_hat@T.matrix()
+#     vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1)
+    
+#     # Analytic jacobian
+#     dLog_dT = Pose3.LogmapDerivative(T)
+#     analytic_H1 = -Gx@vec@np.expand_dims(np.sin(Gtheta@Pose3.Logmap(T)),axis=-1)@Gtheta@dLog_dT    
+
+#     # Numerical Jacobian 
+#     numerical_H1 = numericalDerivative21(h, T, T_dot)
+ 
+#     assert np.allclose(numerical_H1,analytic_H1)
 
 if __name__ == "__main__":
     test_reproj_err_jacobian()
     test_object_motion_jacobian()
-    test_constraint_factor()
+    test_constraint_factor_v2()
