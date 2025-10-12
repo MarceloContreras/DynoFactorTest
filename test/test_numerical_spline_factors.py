@@ -125,7 +125,7 @@ def test_object_motion_jacobian():
  
 #     assert np.allclose(numerical_H1,analytic_H1)
 
-def test_constraint_factor_vectorized():
+def test_vectorized_pose():
     # Section IV.C     
     # This G matrix has two tweaks for proper use with
     # vectorized poses 12 x 1 and also GTSAM where rotations and position 
@@ -163,7 +163,54 @@ def test_constraint_factor_vectorized():
     
     assert np.allclose(numerical_H1,analytic_H1)
 
+
+def test_vectorized_dot_T():
+    # Section IV.C     
+    # This G matrix has two tweaks for proper use with
+    # vectorized poses 12 x 1 and also GTSAM where rotations and position 
+    G  = np.array([[ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0.,  1.,  0.,  0.,  0.],
+                   [ 0. ,-1.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0., -1.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0., -0.],
+                   [ 1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  1.,  0.,  0.,  0.,  0.],
+                   [-1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  1.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  1.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  1.]])
+
+    # Values from testPose3.cpp
+    R = Rot3.RzRyRx(np.pi/3, np.pi/3, np.pi/3)
+    t = Point3(0.5, -0.2, 0.1)
+    T1 = Pose3(R, t)
+
+    def vec(M:np.ndarray):
+        """Vectorize top 3x4 block (12x1), column-major"""
+        return M[0:3,:].reshape(-1, order='F')
+
+    def h(omega:np.ndarray,pose:Pose3):
+        return vec(Pose3.Hat(omega) @ pose.matrix())
+    
+    rho = np.array([10.0, -0.2, 1.5])   # translational part
+    phi = np.array([0.01, np.pi/8, -0.03]) # rotational part (so small angle)
+    xi = np.hstack((phi, rho))          # shape (6,)
+
+    analytic_H1 = np.kron(T1.matrix().T,np.eye(3))@G
+    numerical_H1 = numericalDerivative21(h, xi,T1)
+
+    d_dotTvec_dTvec = np.kron(np.eye(4),Pose3.Hat(xi)[:3,:3])
+    d_Tvec_d_xi = np.kron(np.eye(4), T1.rotation().matrix()) @ G
+
+    analytic_H2 = d_dotTvec_dTvec @ d_Tvec_d_xi
+    numerical_H2 = numericalDerivative22(h, xi,T1)
+
+    assert np.allclose(numerical_H1,analytic_H1) and np.allclose(numerical_H2,analytic_H2)
+
+
 if __name__ == "__main__":
     test_reproj_err_jacobian()
     test_object_motion_jacobian()
-    test_constraint_factor_vectorized()
+    test_vectorized_pose()
+    test_vectorized_dot_T()
