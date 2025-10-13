@@ -249,6 +249,93 @@ def test_constraint_factor_adjoint():
     
     assert np.allclose(analytic_H1,numerical_H1) and np.allclose(analytic_H2,numerical_H2)
     
+def test_constraint_factor_adjoint_right_increment():
+    # Section IV.C 
+    Gx = np.array([[0,0,0,0,0,0,0,0,0,1,0,0]])
+    Gtheta = np.array([[0,0,1,0,0,0]])
+    G  = np.array([[ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0.,  1.,  0.,  0.,  0.],
+                   [ 0. ,-1.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0., -1.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0., -0.],
+                   [ 1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  1.,  0.,  0.,  0.,  0.],
+                   [-1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  1.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  1.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  1.]])
+    
+    T_bc = np.array([[ 0, 0, 1,0.9],
+                     [-1, 0, 0,  0],
+                     [ 0,-1, 0,  0],
+                     [ 0, 0, 0,  1]])
+    T_bc = Pose3(T_bc)
+
+    def vec(M:np.ndarray):
+        """Vectorize top 3x4 block (12x1), column-major"""
+        return M[0:3,:].reshape(-1, order='F')
+
+    def h(pose:Pose3, omega:np.ndarray):
+        omega_wb = T_bc.Adjoint(omega)
+        T_wb = T_bc.matrix()@pose.matrix()@T_bc.inverse().matrix()
+        
+        T_dot_wb =  T_wb @ Pose3.Hat(omega_wb)
+        T_dot_wb_vec = vec(T_dot_wb)
+        
+        theta = np.dot(Gtheta,Pose3.Logmap(Pose3(T_wb)))
+        return np.array([np.cos(theta)@Gx@T_dot_wb_vec])
+
+    # Pose
+    R = Rot3.Rodrigues(0.3,0.3,0.3) 
+    t = Point3(3.5,-2.2,4.2)      
+    T = Pose3(R,t) 
+    T_wb = T_bc.matrix()@T.matrix()@T_bc.inverse().matrix()
+    T_wb = Pose3(T_wb)
+
+    # Omega (generalized velocity)
+    rho = np.array([10.0, -0.2, 1.5])   
+    phi = np.array([0.01, np.pi/8, -0.03]) 
+    omega = np.hstack((phi, rho)) 
+    omega_wb = Pose3.AdjointMap(Pose3(T_bc))@omega
+
+    # Yaw angle and Delta Pose
+    theta = np.dot(Gtheta,Pose3.Logmap(T_wb))
+    sin = np.sin(theta)
+    cos = np.cos(theta)
+    Tdot = T_wb.matrix() @ Pose3.Hat(omega_wb)
+    Tdot_vec = vec(Tdot)
+
+    # Analytic Jacobian
+    AdjTbc = T_bc.AdjointMap()
+
+    Jrinv_Twb = Pose3.LogmapDerivative(T_wb)
+    Jrinv_Twc = Pose3.LogmapDerivative(T)
+    Jl_AdjTbc_T = Pose3.ExpmapDerivative(AdjTbc@Pose3.Logmap(T))
+    
+    dDTvec_dTvec = np.kron(Pose3.Hat(omega_wb).T, np.eye(3))
+    dTvec_dTwb = np.kron(np.eye(4), T_wb.rotation().matrix()) @ G
+    dTwb_dTwc = Jl_AdjTbc_T@AdjTbc@Jrinv_Twc
+
+    # 1. Chain rule
+    # 1.1 d(cos(theta))/d(T) * Gx * Tdot_vec  
+    temp1 = -sin*Gx@Tdot_vec*Gtheta@Jrinv_Twb@dTwb_dTwc
+    # 1.2 cos(theta) * Gx * d(Tdot_vec)/d(T)
+    temp2 = cos@Gx@dDTvec_dTvec@dTvec_dTwb@dTwb_dTwc
+    
+    analytic_H1 = temp1 + temp2
+    
+    # 2. de_domega = de_dTdot_vec * dTdot_vec_domega * domega_b_domega_c 
+    de_dDTvec = cos*Gx
+    dDTvec_domega = np.kron(np.eye(4),T_wb.rotation().matrix())@G
+    domegab_domegac = AdjTbc
+    analytic_H2 = de_dDTvec@dDTvec_domega@domegab_domegac
+
+    # Numerical Jacobian
+    numerical_H1 = numericalDerivative21(h, T, omega)
+    numerical_H2 = numericalDerivative22(h, T, omega)
+    
+    assert np.allclose(analytic_H1, numerical_H1) and np.allclose(analytic_H2,numerical_H2)
 
 def test_vectorized_pose():
     # Section IV.C     
@@ -327,12 +414,61 @@ def test_vectorized_dot_T():
     numerical_H1 = numericalDerivative21(h, omega,T1)
 
     dDTvec_dTvec = np.kron(np.eye(4), Pose3.Hat(omega)[:3,:3])
-    dTvec_domega = np.kron(np.eye(4), T1.rotation().matrix()) @ G
+    dTvec_dxi = np.kron(np.eye(4), T1.rotation().matrix()) @ G
 
-    analytic_H2 = dDTvec_dTvec @ dTvec_domega
+    analytic_H2 = dDTvec_dTvec @ dTvec_dxi
     numerical_H2 = numericalDerivative22(h, omega,T1)
 
     assert np.allclose(numerical_H1,analytic_H1) and np.allclose(numerical_H2,analytic_H2)
+
+
+def test_vectorized_dot_T_right_increment():
+    # This factor deviates from the dot_T as now the formula is 
+    # \dot{T}= T * Pose.Hat(omega) in order to exploit the fact
+    # that the Pose spline utilizes the local omega (associated to the right increments)
+
+    # This G matrix has two tweaks for proper use with
+    # vectorized poses 12 x 1 and also GTSAM where rotations and position 
+    G  = np.array([[ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0.,  1.,  0.,  0.,  0.],
+                   [ 0. ,-1.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0., -1.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0., -0.],
+                   [ 1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  1.,  0.,  0.,  0.,  0.],
+                   [-1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  1.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  1.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  1.]])
+
+    def vec(M:np.ndarray):
+        """Vectorize top 3x4 block (12x1), column-major"""
+        return M[0:3,:].reshape(-1, order='F')
+
+    def h(omega:np.ndarray,pose:Pose3):
+        return vec(pose.matrix() @ Pose3.Hat(omega))
+
+    # Pose
+    R = Rot3.RzRyRx(np.pi/3, np.pi/3, np.pi/3)
+    t = Point3(0.5, -0.2, 0.1)
+    T = Pose3(R, t)
+
+    # Generalized velocity vector 
+    rho = np.array([10.0, -0.2, 1.5])   
+    phi = np.array([0.01, np.pi/8, -0.03])
+    omega = np.hstack((phi, rho))          
+
+    analytic_H1 = np.kron(np.eye(4),T.rotation().matrix())@G
+    numerical_H1 = numericalDerivative21(h, omega,T)
+
+    dDTvec_dTvec = np.kron(Pose3.Hat(omega).T, np.eye(3))
+    dTvec_dxi = np.kron(np.eye(4), T.rotation().matrix()) @ G
+
+    analytic_H2 = dDTvec_dTvec @ dTvec_dxi
+    numerical_H2 = numericalDerivative22(h, omega,T)
+
+    assert np.allclose(numerical_H1,analytic_H1) and np.allclose(numerical_H2, analytic_H2)
 
 
 if __name__ == "__main__":
@@ -341,4 +477,5 @@ if __name__ == "__main__":
     test_vectorized_pose()
     test_vectorized_dot_T()
     test_constraint_factor()
-    # test_constraint_factor_adjoint()
+    test_constraint_factor_adjoint()
+    test_vectorized_dot_T_right_increment()
