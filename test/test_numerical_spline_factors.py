@@ -92,38 +92,70 @@ def test_object_motion_jacobian():
     
     assert np.allclose(numerical_H1,analytic_H1) and np.allclose(numerical_H2,analytic_H2)
 
-# def test_constraint_factor_v1():
-#     # Section IV.C 
-#     Gx = np.array([[0,0,0,1,0,0]])
-#     Gy = np.array([[0,0,0,0,1,0]])
-#     Gtheta = np.array([[0,0,1,0,0,0]])
-
-#     def h(pose:Pose3, T_dot:np.ndarray):
-#         tangent = Pose3.Logmap(pose)
-#         vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1) # TODO FIX Problem since this is not a lie algebra        
-#         return np.expand_dims(np.cos(Gtheta@tangent),axis=-1)@Gx@vec
-
-#     # Pose
-#     R = Rot3.Rodrigues(0.3,0.3,0.3) 
-#     t = Point3(3.5,-2.2,4.2)      
-#     T = Pose3(R,t) 
-
-#     # T_dot = omega_hat @ T, omega = [0,0,-0.1,-0.1,-0.1,1.0]
-#     omega_hat = np.array([[   0,-0.1,   0,-0.1],
-#                         [ 0.1,   0,-0.1,-0.1],
-#                         [-0.1, 0.1,   0, 1.0],
-#                         [   0,   0,   0, 1.0]])
-#     T_dot = omega_hat@T.matrix()
-#     vec = np.expand_dims(Pose3.Vee(T_dot),axis=-1)
+def test_constraint_factor():
+    # Section IV.C 
+    Gx = np.array([[0,0,0,0,0,0,0,0,0,1,0,0]])
+    Gtheta = np.array([[0,0,1,0,0,0]])
+    G  = np.array([[ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0.,  1.,  0.,  0.,  0.],
+                   [ 0. ,-1.,  0.,  0.,  0.,  0.],
+                   [ 0. , 0., -1.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0., -0.],
+                   [ 1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  1.,  0.,  0.,  0.,  0.],
+                   [-1.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  0.],
+                   [ 0.,  0.,  0.,  1.,  0.,  0.],
+                   [ 0.,  0.,  0.,  0.,  1.,  0.],
+                   [ 0.,  0.,  0.,  0.,  0.,  1.]])
     
-#     # Analytic jacobian
-#     dLog_dT = Pose3.LogmapDerivative(T)
-#     analytic_H1 = -Gx@vec@np.expand_dims(np.sin(Gtheta@Pose3.Logmap(T)),axis=-1)@Gtheta@dLog_dT    
+    def vec(M:np.ndarray):
+        """Vectorize top 3x4 block (12x1), column-major"""
+        return M[0:3,:].reshape(-1, order='F')
 
-#     # Numerical Jacobian 
-#     numerical_H1 = numericalDerivative21(h, T, T_dot)
- 
-#     assert np.allclose(numerical_H1,analytic_H1)
+    def h(pose:Pose3, omega:np.ndarray):
+        T_dot = Pose3.Hat(omega) @ pose.matrix()
+        T_dot_vec = vec(T_dot)
+        angle_z = np.dot(Gtheta,Pose3.Logmap(pose))
+        return np.array([np.cos(angle_z)@Gx@T_dot_vec])
+
+    # Pose
+    R = Rot3.Rodrigues(0.3,0.3,0.3) 
+    t = Point3(3.5,-2.2,4.2)      
+    T = Pose3(R,t) 
+
+    # Omega (generalized velocity)
+    rho = np.array([10.0, -0.2, 1.5])   
+    phi = np.array([0.01, np.pi/8, -0.03]) 
+    omega = np.hstack((phi, rho))          
+
+    # Analytic Jacobians 
+    theta_z = np.dot(Gtheta,Pose3.Logmap(T))
+    sin_z = np.sin(theta_z)
+    cos_z = np.cos(theta_z)
+
+    Tdot = Pose3.Hat(omega) @ T.matrix()
+    Tdot_vec = vec(Tdot)
+    Jr_inv = Pose3.LogmapDerivative(T)
+    d_dotTvec_dTvec = np.kron(np.eye(4), Pose3.Hat(omega)[:3,:3])
+    d_Tvec_d_xi = np.kron(np.eye(4), T.rotation().matrix()) @ G
+
+    # d(cos(theta))*Gx*Tdot_vec = -sin(theta) * Gtheta * Jr^{-1}(T) * Gx * Tdot_vec 
+    temp1 = -sin_z*Gx@Tdot_vec*Gtheta@Jr_inv
+    # d(Gx*Tdot_vec)@cos(theta) = cos(theta) * Gx * d_dotT_vec_dTvec * dTvec_dxi
+    temp2 = cos_z@Gx@d_dotTvec_dTvec@d_Tvec_d_xi
+
+    # 1. Coming from the chain rule  d(cos(theta))*Gx*Tdot_vec + d(Gx*Tdot_vec)@cos(theta)
+    analytic_H1 = temp1 + temp2
+    
+    # 2. de_domega = cos_z * Gx * d_dotTvec_omega 
+    analytic_H2 = cos_z*Gx@np.kron(T.matrix().T,np.eye(3))@G    
+
+    # Numerical Jacobian 
+    numerical_H1 = numericalDerivative21(h, T, omega)
+    numerical_H2 = numericalDerivative22(h, T, omega)
+
+    assert np.allclose(numerical_H1,analytic_H1) and np.allclose(numerical_H2,analytic_H2)
 
 def test_vectorized_pose():
     # Section IV.C     
@@ -200,7 +232,7 @@ def test_vectorized_dot_T():
     analytic_H1 = np.kron(T1.matrix().T,np.eye(3))@G
     numerical_H1 = numericalDerivative21(h, xi,T1)
 
-    d_dotTvec_dTvec = np.kron(np.eye(4),Pose3.Hat(xi)[:3,:3])
+    d_dotTvec_dTvec = np.kron(np.eye(4), Pose3.Hat(xi)[:3,:3])
     d_Tvec_d_xi = np.kron(np.eye(4), T1.rotation().matrix()) @ G
 
     analytic_H2 = d_dotTvec_dTvec @ d_Tvec_d_xi
@@ -214,3 +246,4 @@ if __name__ == "__main__":
     test_object_motion_jacobian()
     test_vectorized_pose()
     test_vectorized_dot_T()
+    test_constraint_factor()
