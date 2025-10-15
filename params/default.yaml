@@ -7,15 +7,15 @@ car:
   params:
     l: 3.0
     dt: 0.1
-    v: 10
-    delta: -0.25
+    v: 50
+    delta: -0.1
   simulation:
-    n_points: 30
-    n_frames: 40
+    n_points: 5
+    n_frames: 10
   noise:
     apply: true
-    pose_noise: 0.0005
-    point_noise: 0.05
+    pose_noise: 0.1
+    point_noise: 0.1
 
 cam:
   calibration:
@@ -25,14 +25,14 @@ cam:
   image_dims:
     heigh: 376
     width: 1241
-  # T_bc:
-  #   - [1, 0, 0, 0]
-  #   - [0, 0, 1, 0]
-  #   - [0,-1, 0, 0]
-  #   - [0, 0, 0, 1]
+  T_bc:
+    - [1, 0, 0, 0]
+    - [0, 0, 1, 0]
+    - [0,-1, 0, 0]
+    - [0, 0, 0, 1]
   simulation:
-    n_points: 10
-    n_frames: 8
+    n_points: 40
+    n_frames: 15
     n_obs: 3
   noise:
     apply: true

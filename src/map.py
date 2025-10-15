@@ -43,7 +43,7 @@ class Map(object):
         self.config = config
 
     def generateTraj(self):
-        self.cam_poses = posesOnCircle(self.n_frames, 50)
+        self.cam_poses = posesOnCircle(self.n_frames, 45)
 
     def generatePoints(self):
         self.pts = np.random.uniform([-10, -10, -10], [10, 10, 10], (self.n_points, 3))
@@ -111,7 +111,6 @@ class Map(object):
         plt.show()
 
     def simulate(self):
-        # self.car.simulate()
         self.generateTraj()
         self.generatePoints()
         self.generateObs()

@@ -2,7 +2,9 @@ import numpy as np
 import gtsam
 import matplotlib.pyplot as plt
 
+
 from map import Map
+from utils import plot_trajectory_car, plot_3d_points_car
 from gtsam.utils import plot
 from gtsam import symbol_shorthand
 from gtsam import (
@@ -32,9 +34,7 @@ class Optimizer(object):
         self.dynamic_landmark_set = None
 
         # GTSAM noises
-        self.model_meas_noise = gtsam.noiseModel.Isotropic.Sigma(
-            2, 1.0
-        )  # one pixel in u and v
+        self.model_meas_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
         self.model_pose_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.3, 0.3, 0.3, 0.1, 0.1, 0.1])
         )
@@ -68,15 +68,15 @@ class Optimizer(object):
 
         for j, point in enumerate(self.map.points):
             if len(point.obs) > 2:
-                for pose_id in point.obs:
-                    meas = point.obs[pose_id]
+                for i in point.obs:
+                    meas = point.obs[i]
                     factor = gtsam.CustomFactor(
                         self.model_meas_noise,
-                        [X(pose_id), L(j)],
+                        [X(i), L(j)],
                         partial(error_reprojection, [meas, K]),
                     )
                     self.graph.push_back(factor)
-                    self.poses_set.add(pose_id)
+                    self.poses_set.add(i)
                 self.landmark_set.add(j)
 
         # Add Prior factor
@@ -119,6 +119,8 @@ class Optimizer(object):
         self.initial_estimate.print("Initial Estimates:\n")
 
     def run(self):
+        self.map.simulate()
+        self.map.car.simulate()
         self.setup_camera()
 
         # Optimize the graph and print results
@@ -134,8 +136,10 @@ class Optimizer(object):
         print("final error = {}".format(self.graph.error(result)))
 
         marginals = Marginals(self.graph, result)
-        plot.plot_3d_points(1, result, marginals=marginals)
-        plot.plot_trajectory(1, result, marginals=marginals, scale=8)
+        # plot.plot_3d_points(1, result, marginals=marginals)
+        plot.plot_trajectory(1, result, marginals=marginals, scale=5)
+        plot_trajectory_car(1, self.map.car.car_poses, scale=2)
+        plot_3d_points_car(1, self.map.car.pts)
         plot.set_axes_equal(1)
         plt.show()
 
@@ -146,9 +150,8 @@ if __name__ == "__main__":
     with open("params/default.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    test = Map(config)
-    test.simulate()
-    optimizer = Optimizer(test)
+    simulation = Map(config)
+    optimizer = Optimizer(simulation)
     optimizer.run()
 
 # TODO: Check FrontEnd.cc class in DynoSam

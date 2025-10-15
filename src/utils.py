@@ -4,6 +4,12 @@ import matplotlib.pyplot as plt
 from typing import List
 from gtsam import Point3, Pose3, Rot3
 
+from typing import Iterable, Optional, Tuple
+
+import gtsam
+from gtsam import Marginals, Point3, Pose3, Values
+from gtsam.utils import plot
+
 _M_PI_2 = np.pi / 2
 _M_PI_4 = np.pi / 4
 
@@ -91,7 +97,9 @@ def posesOnCircle(num_cameras=8, R=30):
     delta_rotation = Rot3.Ypr(0, -theta, 0)
 
     # Delta translation in world frame
-    delta_translation_world = np.array([R * (np.cos(theta) - 1), R * np.sin(theta), 0])
+    delta_translation_world = np.array(
+        [R * (np.cos(theta) - 1), R * np.sin(theta), 1.5 * np.sin(5 * theta)]
+    )
 
     # Transform delta translation to local frame of the camera
     delta_translation_local = init.rotation().unrotate(delta_translation_world)
@@ -101,3 +109,53 @@ def posesOnCircle(num_cameras=8, R=30):
 
     # Generate poses
     return createPoses(init, delta, num_cameras)
+
+
+def plot_trajectory_car(
+    fignum: int,
+    poses: list[gtsam.Pose3],
+    scale: float = 1,
+    title: str = "Plot Trajectory",
+    axis_labels: Iterable[str] = ("X axis", "Y axis", "Z axis"),
+) -> None:
+
+    fig = plt.figure(fignum)
+    if not fig.axes:
+        axes = fig.add_subplot(projection="3d")
+    else:
+        axes = fig.axes[0]
+
+    axes.set_xlabel(axis_labels[0])
+    axes.set_ylabel(axis_labels[1])
+    axes.set_zlabel(axis_labels[2])
+
+    # Then 3D poses, if any
+    for pose in poses:
+        covariance = None
+        plot.plot_pose3_on_axes(axes, pose, P=covariance, axis_length=scale)
+
+    fig.suptitle(title)
+    fig.canvas.manager.set_window_title(title.lower())
+
+
+def plot_3d_points_car(
+    fignum,
+    points: np.ndarray,
+    linespec="g*",
+    marginals=None,
+    title="3D Points",
+    axis_labels=("X axis", "Y axis", "Z axis"),
+):
+
+    # Plot points and covariance matrices
+    timestamp = points.shape[0]
+
+    for t in range(timestamp):
+        for pt in points[t]:
+            fig = plot.plot_point3(
+                fignum, Point3(pt), linespec, None, axis_labels=axis_labels
+            )
+
+    fig = plt.figure(fignum)
+    fig.suptitle(title)
+    fig.canvas.manager.set_window_title(title.lower())
