@@ -25,18 +25,18 @@ cam:
   image_dims:
     heigh: 376
     width: 1241
-  T_bc:
-    - [1, 0, 0, 0]
-    - [0, 0, 1, 0]
-    - [0,-1, 0, 0]
-    - [0, 0, 0, 1]
+  # T_bc:
+  #   - [1, 0, 0, 0]
+  #   - [0, 0, 1, 0]
+  #   - [0,-1, 0, 0]
+  #   - [0, 0, 0, 1]
   simulation:
-    n_points: 150
-    n_frames: 40
-    n_obs: 20
+    n_points: 10
+    n_frames: 8
+    n_obs: 3
   noise:
-    apply: false
-    obs_noise: 0.5
-    pose_noise: 0.005
-    point_noise: 0.05
+    apply: true
+    obs_noise: 0.1
+    pose_noise: 0.1
+    point_noise: 0.1
   

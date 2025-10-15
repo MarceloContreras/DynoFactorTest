@@ -3,158 +3,142 @@ import gtsam
 import matplotlib.pyplot as plt
 
 from map import Map
+from gtsam.utils import plot
 from gtsam import symbol_shorthand
-from gtsam import (Cal3_S2, DoglegOptimizer,
-                   NonlinearFactorGraph,
-                   PriorFactorPoint3, PriorFactorPose3, Values,
-                   Point3,Pose3)
+from gtsam import (
+    Cal3_S2,
+    LevenbergMarquardtOptimizer,
+    NonlinearFactorGraph,
+    PriorFactorPoint3,
+    PriorFactorPose3,
+    Values,
+    Point3,
+    Pose3,
+    Marginals,
+)
 from functools import partial
-from factors import error_reprojection,error_object_motion,error_object_smoother
+from factors import error_reprojection
 
 L = symbol_shorthand.L
 X = symbol_shorthand.X
-O = symbol_shorthand.O
+
 
 class Optimizer(object):
-    def __init__(self,map:Map):
+    def __init__(self, map: Map):
         self.map = map
         self.poses_set = None
         self.object_set = None
         self.landmark_set = None
         self.dynamic_landmark_set = None
 
-        self.measurement_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)  # one pixel in u and v
-        self.pose_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.3, 0.3, 0.3, 0.1, 0.1, 0.1]))
-        self.point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+        # GTSAM noises
+        self.model_meas_noise = gtsam.noiseModel.Isotropic.Sigma(
+            2, 1.0
+        )  # one pixel in u and v
+        self.model_pose_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([0.3, 0.3, 0.3, 0.1, 0.1, 0.1])
+        )
+        self.model_point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+
+        # Initial solution noise
+        apply_noise = self.map.config["cam"]["noise"]["apply"]
+        if apply_noise:
+            self.obs_noise = self.map.config["cam"]["noise"]["obs_noise"]
+            self.pose_noise = self.map.config["cam"]["noise"]["pose_noise"]
+            self.point_noise = self.map.config["cam"]["noise"]["point_noise"]
 
         self.graph = None
         self.initial_estimate = None
+        self.huber_loss = gtsam.noiseModel.mEstimator.Huber(2.432)
 
     def setup_camera(self):
         self.graph = NonlinearFactorGraph()
+        K = Cal3_S2(
+            fx=self.map.K[0, 0],
+            fy=self.map.K[1, 1],
+            s=0,
+            u0=self.map.K[0, 2],
+            v0=self.map.K[1, 2],
+        )
+        # robust_model = gtsam.noiseModel.Robust.Create(self.huber_loss,self.model_meas_noise)
 
-        # Prior factor
-        factor = PriorFactorPose3(X(0), Pose3(self.map.cam_poses[0]), self.pose_noise)
-        self.graph.push_back(factor)
-
-        K = Cal3_S2(self.map.K[0,0],self.map.K[1,1],0,self.map.K[0,2],self.map.K[1,2])
-        
         # Include poses and landmarks
         self.poses_set = set()
         self.landmark_set = set()
-        
-        for j,point in enumerate(self.map.points):
-            for pose_id in point.obs:
-                meas = point.obs[pose_id]
-                factor = gtsam.CustomFactor(self.measurement_noise,
-                                            [X(pose_id),L(j)],
-                                            partial(error_reprojection,[meas,K]))
-                self.graph.push_back(factor)
 
-                self.poses_set.add(pose_id)
-            if len(point.obs):
+        for j, point in enumerate(self.map.points):
+            if len(point.obs) > 2:
+                for pose_id in point.obs:
+                    meas = point.obs[pose_id]
+                    factor = gtsam.CustomFactor(
+                        self.model_meas_noise,
+                        [X(pose_id), L(j)],
+                        partial(error_reprojection, [meas, K]),
+                    )
+                    self.graph.push_back(factor)
+                    self.poses_set.add(pose_id)
                 self.landmark_set.add(j)
 
+        # Add Prior factor
+        first_pose_id = next(iter(self.poses_set))
+        prior_pose = PriorFactorPose3(
+            X(first_pose_id),
+            Pose3(self.map.cam_poses[first_pose_id]),
+            self.model_pose_noise,
+        )
+        self.graph.push_back(prior_pose)
+
         # Set prior to avoid gauge freedom
-        factor = PriorFactorPoint3(L(0), Point3(self.map.pts[0]), self.point_noise)
-        self.graph.push_back(factor)
+        first_point_id = next(iter(self.landmark_set))
+        prior_landmark = PriorFactorPoint3(
+            L(first_point_id),
+            Point3(self.map.pts[first_point_id]),
+            self.model_point_noise,
+        )
+        self.graph.push_back(prior_landmark)
         self.graph.print("Factor Graph:\n")
 
         # Store initial solution
         self.initial_estimate = Values()
         rng = np.random.default_rng()
         for pose_id in self.poses_set:
-            temp = Pose3(self.map.cam_poses[pose_id])
-            transformed_pose = temp.retract(0.2 * rng.standard_normal(6).reshape(6, 1))
+            pose = self.map.cam_poses[pose_id]
+            transformed_pose = pose.retract(
+                self.pose_noise * rng.standard_normal(6).reshape(6, 1)
+            )
             self.initial_estimate.insert(X(pose_id), transformed_pose)
-            self.map.cam_poses[pose_id] = transformed_pose.matrix()
-            
+            # self.map.cam_poses[pose_id] = transformed_pose.matrix()
+
         for point_id in self.landmark_set:
-            transformed_point = self.map.pts[point_id] + 0.1 * rng.standard_normal(3)
+            transformed_point = self.map.pts[
+                point_id
+            ] + self.point_noise * rng.standard_normal(3)
             self.initial_estimate.insert(L(point_id), Point3(transformed_point))
-            self.map.pts[j] = transformed_point
-        self.initial_estimate.print("Initial Estimates:\n")
+            # self.map.pts[point_id] = transformed_point
 
-    def setup_objects(self):
-        K = Cal3_S2(self.map.K[0,0],self.map.K[1,1],0,self.map.K[0,2],self.map.K[1,2])
-
-        self.dynamic_landmark_set = set()
-
-        # Reprojection error 
-        for j,point in enumerate(self.map.car.points):
-            for pose_id in point.obs:
-                meas = point.obs[pose_id]
-                factor = gtsam.CustomFactor(self.measurement_noise,
-                                            [X(pose_id),L(j+len(self.map.points))],
-                                            partial(error_reprojection,[meas,K]))
-                self.graph.push_back(factor)
-                self.poses_set.add(pose_id)
-            self.dynamic_landmark_set.add(j+len(self.map.points))
-
-        # Object motion error
-        for j in range(len(self.map.car.points)-1):
-            for i in range(len(self.map.car.car_poses)-1):
-                factor = gtsam.CustomFactor(self.measurement_noise,
-                                            [O(i),
-                                             O(i+1),
-                                             L(j+len(self.map.points)),
-                                             L(j+len(self.map.points)+1)],
-                                            error_object_motion)
-                self.graph.push_back(factor)
-                self.object_set.add(i)
-                self.object_set.add(i+1)
-
-            self.dynamic_landmark_set.add(j+len(self.map.points))
-            self.dynamic_landmark_set.add(j+len(self.map.points)+1)
-
-        # Object motion smoother
-        for i in range(len(self.map.car.car_poses)-2):
-            factor = gtsam.CustomFactor(self.measurement_noise,
-                                        [O(i),
-                                         O(i+1),
-                                         O(i+2)],
-                                        error_object_smoother)
-            self.graph.push_back(factor)
-            self.object_set.add(i)
-            self.object_set.add(i+1)
-            self.object_set.add(i+2)
-
-        # Initial solution 
-        rng = np.random.default_rng()
-        for pose_id in self.object_set:
-            temp = Pose3(self.map.car.car_poses[pose_id])
-            transformed_pose = temp.retract(0.2 * rng.standard_normal(6).reshape(6, 1))
-            self.initial_estimate.insert(O(pose_id), transformed_pose)
-            self.map.car.car_poses[pose_id] = transformed_pose.matrix()
-            
-        for point_id in self.dynamic_landmark_set:
-            transformed_point = self.map.pts[point_id] + 0.1 * rng.standard_normal(3)
-            self.initial_estimate.insert(L(point_id), Point3(transformed_point))
-            self.map.pts[j] = transformed_point
         self.initial_estimate.print("Initial Estimates:\n")
 
     def run(self):
         self.setup_camera()
-        # self.setup_objects()
 
-        self.map.viz()
-
-         # Optimize the graph and print results
-        params = gtsam.DoglegParams()
+        # Optimize the graph and print results
+        params = gtsam.LevenbergMarquardtParams()
         params.setVerbosity("TERMINATION")
-        optimizer = DoglegOptimizer(self.graph, self.initial_estimate, params)
+        optimizer = LevenbergMarquardtOptimizer(
+            self.graph, self.initial_estimate, params
+        )
         print("Optimizing:")
         result = optimizer.optimize()
         result.print("Final results:\n")
         print("initial error = {}".format(self.graph.error(self.initial_estimate)))
         print("final error = {}".format(self.graph.error(result)))
 
-        for i in self.poses_set:
-            self.map.cam_poses[i] = result.atPose3(X(i)).matrix()
-        for j in self.landmark_set:
-            self.map.pts[j] = np.array(result.atPoint3(L(j)))
+        marginals = Marginals(self.graph, result)
+        plot.plot_3d_points(1, result, marginals=marginals)
+        plot.plot_trajectory(1, result, marginals=marginals, scale=8)
+        plot.set_axes_equal(1)
+        plt.show()
 
-        self.map.viz()
 
 if __name__ == "__main__":
     import yaml
@@ -162,12 +146,9 @@ if __name__ == "__main__":
     with open("params/default.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    test = Map(config)   
+    test = Map(config)
     test.simulate()
     optimizer = Optimizer(test)
-    optimizer.run()    
+    optimizer.run()
 
-
-"""
-Check FrontEnd.cc class in DynoSam
-"""
+# TODO: Check FrontEnd.cc class in DynoSam
