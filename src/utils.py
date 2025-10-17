@@ -93,7 +93,7 @@ def posesOnCircle(num_cameras=8, R=30):
     init_position = np.array([R, 0, 0])
     init = Pose3(init_rotation, init_position)
 
-    # Delta rotation: rotate by -theta around Z-axis (counterclockwise movement)
+    # Delta rotation: rotate by -theta around Y-axis (counterclockwise movement)
     delta_rotation = Rot3.Ypr(0, -theta, 0)
 
     # Delta translation in world frame

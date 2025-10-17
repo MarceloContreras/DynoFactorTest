@@ -40,6 +40,8 @@ class Car(object):
             self.pose_noise = config["car"]["noise"]["pose_noise"]
             self.point_noise = config["car"]["noise"]["point_noise"]
 
+        self.simulate()
+
     def generateTraj(self):
         init_rotation = Rot3.Ypr(np.pi / 2, 0, 0)
         init_position = np.array([-10, -10, 0])

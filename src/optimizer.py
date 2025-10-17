@@ -19,10 +19,12 @@ from gtsam import (
     Marginals,
 )
 from functools import partial
-from factors import error_reprojection
+from factors import error_reprojection, error_object_motion
 
-L = symbol_shorthand.L
-X = symbol_shorthand.X
+L = symbol_shorthand.L  # Static and dynamic landmark
+X = symbol_shorthand.X  # Camera pose
+O = symbol_shorthand.O  # Object Pose
+H = symbol_shorthand.H  # Object motion
 
 
 class Optimizer(object):
@@ -60,12 +62,14 @@ class Optimizer(object):
             u0=self.map.K[0, 2],
             v0=self.map.K[1, 2],
         )
-        # robust_model = gtsam.noiseModel.Robust.Create(self.huber_loss,self.model_meas_noise)
 
         # Include poses and landmarks
         self.poses_set = set()
-        self.landmark_set = set()
+        self.static_landmark_set = set()
+        self.dynamic_landmark_dict = dict()
 
+        # 1. Add measurements
+        # Static maeasurements
         for j, point in enumerate(self.map.points):
             if len(point.obs) > 2:
                 for i in point.obs:
@@ -77,8 +81,58 @@ class Optimizer(object):
                     )
                     self.graph.push_back(factor)
                     self.poses_set.add(i)
-                self.landmark_set.add(j)
+                self.static_landmark_set.add(j)
 
+        # Dynamic points
+        if self.map.config["use_dynamic_points"]:
+            # Reprojection error
+            for j, point in enumerate(self.map.car.points):
+                if len(point.obs) > 2:
+                    for i in point.obs:
+                        meas = point.obs[i]
+                        factor = gtsam.CustomFactor(
+                            self.model_meas_noise,
+                            [X(i), L(1000 * (i + 1) + j)],
+                            partial(error_reprojection, [meas, K]),
+                        )
+                        self.graph.push_back(factor)
+                        self.poses_set.add(i)
+                        if i in self.dynamic_landmark_dict:
+                            self.dynamic_landmark_dict[i].append(j)
+                        else:
+                            self.dynamic_landmark_dict[i] = [j]
+
+            # Object factors
+            for pose_id in self.dynamic_landmark_dict:
+                # Object smoother motion
+                if (pose_id + 1) in self.dynamic_landmark_dict.keys():
+                    for point_id in self.dynamic_landmark_dict[pose_id]:
+                        if (point_id + 1) in self.dynamic_landmark_dict[pose_id]:
+                            factor = gtsam.CustomFactor(
+                                self.model_point_noise,
+                                [
+                                    H(pose_id),
+                                    L(1000 * (pose_id + 1) + point_id),
+                                    L(1000 * (pose_id + 1) + point_id + 1),
+                                ],
+                                partial(error_object_motion),
+                            )
+                            self.graph.push_back(factor)
+
+                    # Object motion
+                    if (pose_id + 2) in self.dynamic_landmark_dict.keys():
+                        print(
+                            f"Making factor between {pose_id},{pose_id+1} and {pose_id+1},{pose_id+2}"
+                        )
+                        factor = gtsam.BetweenFactorPose3(
+                            H(pose_id),
+                            H(pose_id + 1),
+                            Pose3.Identity(),
+                            self.model_pose_noise,
+                        )
+                        self.graph.push_back(factor)
+
+        # 2. Adding priors
         # Add Prior factor
         first_pose_id = next(iter(self.poses_set))
         prior_pose = PriorFactorPose3(
@@ -89,7 +143,7 @@ class Optimizer(object):
         self.graph.push_back(prior_pose)
 
         # Set prior to avoid gauge freedom
-        first_point_id = next(iter(self.landmark_set))
+        first_point_id = next(iter(self.static_landmark_set))
         prior_landmark = PriorFactorPoint3(
             L(first_point_id),
             Point3(self.map.pts[first_point_id]),
@@ -98,7 +152,7 @@ class Optimizer(object):
         self.graph.push_back(prior_landmark)
         self.graph.print("Factor Graph:\n")
 
-        # Store initial solution
+        # 3. Store initial solution
         self.initial_estimate = Values()
         rng = np.random.default_rng()
         for pose_id in self.poses_set:
@@ -107,20 +161,35 @@ class Optimizer(object):
                 self.pose_noise * rng.standard_normal(6).reshape(6, 1)
             )
             self.initial_estimate.insert(X(pose_id), transformed_pose)
-            # self.map.cam_poses[pose_id] = transformed_pose.matrix()
 
-        for point_id in self.landmark_set:
+        for point_id in self.static_landmark_set:
             transformed_point = self.map.pts[
                 point_id
             ] + self.point_noise * rng.standard_normal(3)
             self.initial_estimate.insert(L(point_id), Point3(transformed_point))
-            # self.map.pts[point_id] = transformed_point
+
+        if self.map.config["use_dynamic_points"]:
+            for pose_id in self.dynamic_landmark_dict:
+                for point_id in self.dynamic_landmark_dict[pose_id]:
+                    pts = self.map.car.points[point_id].hist_pts[pose_id]
+                    pts += self.point_noise * rng.standard_normal(3)
+                    self.initial_estimate.insert(
+                        L(1000 * (pose_id + 1) + point_id), Point3(pts)
+                    )
+                # Motion initiallation
+                if (pose_id + 1) in self.dynamic_landmark_dict.keys():
+                    pose1 = self.map.cam_poses[pose_id]
+                    pose2 = self.map.cam_poses[pose_id + 1]
+                    motion = pose2 * pose1.inverse()
+                    transformed_motion = motion.retract(
+                        self.pose_noise * rng.standard_normal(6).reshape(6, 1)
+                    )
+                    print(f"Inserting initial value for H{pose_id}")
+                    self.initial_estimate.insert(H(pose_id), transformed_motion)
 
         self.initial_estimate.print("Initial Estimates:\n")
 
     def run(self):
-        self.map.simulate()
-        self.map.car.simulate()
         self.setup_camera()
 
         # Optimize the graph and print results
@@ -130,7 +199,9 @@ class Optimizer(object):
             self.graph, self.initial_estimate, params
         )
         print("Optimizing:")
-        result = optimizer.optimize()
+        result = (
+            optimizer.optimize()
+        )  # TODO FIX ME: CheiralityException after including dynamic points and vehicle motion
         result.print("Final results:\n")
         print("initial error = {}".format(self.graph.error(self.initial_estimate)))
         print("final error = {}".format(self.graph.error(result)))
@@ -153,5 +224,3 @@ if __name__ == "__main__":
     simulation = Map(config)
     optimizer = Optimizer(simulation)
     optimizer.run()
-
-# TODO: Check FrontEnd.cc class in DynoSam

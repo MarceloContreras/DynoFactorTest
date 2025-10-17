@@ -42,6 +42,8 @@ class Map(object):
         self.T_bc = np.array(config["cam"]["T_bc"])
         self.config = config
 
+        self.simulate()
+
     def generateTraj(self):
         self.cam_poses = posesOnCircle(self.n_frames, 45)
 
@@ -50,10 +52,18 @@ class Map(object):
         self.points = [MapPoint(i, pt) for i, pt in enumerate(self.pts)]
 
     def generateObs(self):
+        # Static observations
         for pose_id in range(self.n_frames):
             projs, point_ids = self.projectPoint2Cam(pose_id)
             for obs, point_id in zip(projs, point_ids):
                 self.points[point_id].addObservation(pose_id, obs)
+
+        # Dynamic observations (it assumes that each timestamps had seen
+        # the vehicle and its corresponding points w.r.t world frame)
+        for pose_id in range(self.n_frames):
+            dyn_projs, dyn_point_ids = self.projectCarPoint2Cam(pose_id)
+            for obs, point_id in zip(dyn_projs, dyn_point_ids):
+                self.car.points[point_id].addObservation(pose_id, obs)
 
     def projectPoint2Cam(self, pose_id: int):
         """
@@ -67,6 +77,42 @@ class Map(object):
         R_cw = R_wc.T
         points_cam = (R_cw @ (self.pts - t_wc).T).T
         points_ids = np.arange(0, self.n_points)
+
+        # Keep only points in front of the camera and project
+        visible_mask = points_cam[:, 2] > 0.1
+        visible_points = points_cam[visible_mask]
+        points_ids = points_ids[visible_mask]
+
+        # Project by pinhole model and keep points in camera-view
+        projs = self.applyPinholeProj(visible_points)
+        projs_mask = (
+            (projs[:, 0] > 0)
+            & (projs[:, 0] < self.img_width)
+            & (projs[:, 1] > 0)
+            & (projs[:, 1] < self.img_height)
+        )
+
+        return (
+            projs[projs_mask],
+            points_ids[projs_mask],
+        )  # filtered points and correspondence id
+
+    def projectCarPoint2Cam(self, pose_id: int):
+        """
+        Assuming that points are w.r.t world frame (w), transforms them to camera frame
+        and them project them to image plane by pinhole camera model
+        """
+        T_wc = self.cam_poses[pose_id].matrix()
+        R_wc = T_wc[:3, :3]
+        t_wc = T_wc[:3, 3].reshape(1, 3)
+        R_cw = R_wc.T
+
+        points_cam = np.zeros((len(self.car.points), 3))
+        for i, point in enumerate(self.car.points):
+            pts = np.expand_dims(point.hist_pts[pose_id], 0)
+            pts_cam = (R_cw @ (pts - t_wc).T).T
+            points_cam[i] = pts_cam
+        points_ids = np.arange(0, len(self.car.points))
 
         # Keep only points in front of the camera and project
         visible_mask = points_cam[:, 2] > 0.1

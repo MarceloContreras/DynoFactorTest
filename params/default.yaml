@@ -7,11 +7,11 @@ car:
   params:
     l: 3.0
     dt: 0.1
-    v: 50
+    v: 30
     delta: -0.1
   simulation:
-    n_points: 5
-    n_frames: 10
+    n_points: 15
+    n_frames: 15
   noise:
     apply: true
     pose_noise: 0.1
@@ -39,4 +39,5 @@ cam:
     obs_noise: 0.1
     pose_noise: 0.1
     point_noise: 0.1
-  
+
+use_dynamic_points: true
