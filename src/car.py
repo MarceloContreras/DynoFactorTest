@@ -41,7 +41,6 @@ class Car(object):
             self.point_noise = config["car"]["noise"]["point_noise"]
 
     def generateTraj(self):
-        # TODO Some problems with the heading
         init_rotation = Rot3.Ypr(np.pi / 2, 0, 0)
         init_position = np.array([-10, -10, 0])
         init = Pose3(init_rotation, init_position)
@@ -49,23 +48,18 @@ class Car(object):
         poses = [init]
         for _ in range(1, self.n_poses):
             # Delta step
-            dx = self.v * np.cos(self.theta) * self.dt
-            dy = self.v * np.sin(self.theta) * self.dt
-            dyaw = (self.v / self.L) * np.tan(self.delta) * self.dt
+            dx = self.v * self.dt
+            dtheta = self.v / self.L * np.tan(self.delta) * self.dt
 
             # Delta rotation in world frame
-            delta_rotation = Rot3.Ypr(dyaw, 0, 0)
-            # Delta translation in world frame
-            delta_translation_world = np.array([dx, dy, 0])
-            # Transformation delta to local frame
-            delta_translation_local = init.rotation().unrotate(delta_translation_world)
-
+            delta_rotation = Rot3.Ypr(dtheta, 0, 0)
+            # Delta translation in local frame
+            delta_translation_local = np.array([dx, 0, 0])
             # Define delta pose
             delta_pose = Pose3(delta_rotation, delta_translation_local)
 
             # Compose pose
             poses.append(poses[-1].compose(delta_pose))
-            self.stepBicycleModel()
 
         self.car_poses = poses
 
@@ -86,11 +80,6 @@ class Car(object):
             self.pts.append(world_pts)
 
         self.pts = np.stack(self.pts, axis=0)
-
-    def stepBicycleModel(self):
-        self.x = self.x + self.v * np.cos(self.theta) * self.dt
-        self.y = self.y + self.v * np.sin(self.theta) * self.dt
-        self.theta = self.theta + (self.v / self.L) * np.tan(self.delta) * self.dt
 
     def simulate(self):
         self.generateTraj()
