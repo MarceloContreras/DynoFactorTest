@@ -65,23 +65,38 @@ class Optimizer(object):
 
         # Include poses and landmarks
         self.poses_set = set()
+        self.constant_pose_set = set()
+        self.static_pose_landmark_dict = dict()
         self.static_landmark_set = set()
         self.dynamic_landmark_dict = dict()
 
+
         # 1. Add measurements
-        # Static maeasurements
+        # First construct the covisibility graph for each pose 
         for j, point in enumerate(self.map.points):
-            if len(point.obs) > 2:
+            if len(point.obs) > 2: 
                 for i in point.obs:
-                    meas = point.obs[i]
-                    factor = gtsam.CustomFactor(
-                        self.model_meas_noise,
-                        [X(i), L(j)],
-                        partial(error_reprojection, [meas, K]),
-                    )
-                    self.graph.push_back(factor)
-                    self.poses_set.add(i)
-                self.static_landmark_set.add(j)
+                    if i in self.static_pose_landmark_dict:
+                        self.static_pose_landmark_dict[i].append(j)
+                    else:
+                        self.static_pose_landmark_dict[i] = [j]
+
+        # Then traverse across the graph and make sure that they
+        # a min covscore, otherwise add them but as prior factor
+        for pose_id in self.static_pose_landmark_dict:
+            for point_id in self.static_pose_landmark_dict[pose_id]:
+                meas = self.map.points[point_id].obs[pose_id]
+                factor = gtsam.CustomFactor(
+                    self.model_meas_noise,
+                    [X(pose_id), L(point_id)],
+                    partial(error_reprojection, [meas, K]),
+                )
+                self.graph.push_back(factor)
+                self.static_landmark_set.add(point_id)
+                if (len(self.static_pose_landmark_dict[pose_id])<3):
+                    self.constant_pose_set.add(pose_id)
+                else:
+                    self.poses_set.add(pose_id)
 
         # Dynamic points
         if self.map.config["use_dynamic_points"]:
@@ -130,6 +145,7 @@ class Optimizer(object):
                             Pose3.Identity(),
                             self.model_pose_noise,
                         )
+
                         self.graph.push_back(factor)
 
         # 2. Adding priors
@@ -142,6 +158,14 @@ class Optimizer(object):
         )
         self.graph.push_back(prior_pose)
 
+        for pose_id in self.constant_pose_set:
+            prior_pose = PriorFactorPose3(
+                X(pose_id),
+                Pose3(self.map.cam_poses[pose_id]),
+                self.model_pose_noise,
+            )
+            self.graph.push_back(prior_pose)
+    
         # Set prior to avoid gauge freedom
         first_point_id = next(iter(self.static_landmark_set))
         prior_landmark = PriorFactorPoint3(
@@ -155,7 +179,15 @@ class Optimizer(object):
         # 3. Store initial solution
         self.initial_estimate = Values()
         rng = np.random.default_rng()
+
         for pose_id in self.poses_set:
+            pose = self.map.cam_poses[pose_id]
+            transformed_pose = pose.retract(
+                self.pose_noise * rng.standard_normal(6).reshape(6, 1)
+            )
+            self.initial_estimate.insert(X(pose_id), transformed_pose)
+
+        for pose_id in self.constant_pose_set:
             pose = self.map.cam_poses[pose_id]
             transformed_pose = pose.retract(
                 self.pose_noise * rng.standard_normal(6).reshape(6, 1)
@@ -170,6 +202,7 @@ class Optimizer(object):
 
         if self.map.config["use_dynamic_points"]:
             for pose_id in self.dynamic_landmark_dict:
+                # TODO: Should I verify if the factor actually exist?
                 for point_id in self.dynamic_landmark_dict[pose_id]:
                     pts = self.map.car.points[point_id].hist_pts[pose_id]
                     pts += self.point_noise * rng.standard_normal(3)
@@ -178,13 +211,12 @@ class Optimizer(object):
                     )
                 # Motion initiallation
                 if (pose_id + 1) in self.dynamic_landmark_dict.keys():
-                    pose1 = self.map.cam_poses[pose_id]
-                    pose2 = self.map.cam_poses[pose_id + 1]
+                    pose1 = self.map.car.car_poses[pose_id]
+                    pose2 = self.map.car.car_poses[pose_id + 1]
                     motion = pose2 * pose1.inverse()
                     transformed_motion = motion.retract(
                         self.pose_noise * rng.standard_normal(6).reshape(6, 1)
                     )
-                    print(f"Inserting initial value for H{pose_id}")
                     self.initial_estimate.insert(H(pose_id), transformed_motion)
 
         self.initial_estimate.print("Initial Estimates:\n")
@@ -192,9 +224,12 @@ class Optimizer(object):
     def run(self):
         self.setup_camera()
 
+        self.plot_hessian_matrix()
+
         # Optimize the graph and print results
         params = gtsam.LevenbergMarquardtParams()
         params.setVerbosity("TERMINATION")
+        params.setMaxIterations(100)
         optimizer = LevenbergMarquardtOptimizer(
             self.graph, self.initial_estimate, params
         )
@@ -213,6 +248,42 @@ class Optimizer(object):
         plot_3d_points_car(1, self.map.car.pts)
         plot.set_axes_equal(1)
         plt.show()
+
+    def plot_hessian_matrix(self):
+        keys = set()
+        for i in range(self.graph.size()):
+            factor = self.graph.at(i)
+            for k in factor.keys():
+                keys.add(k)
+        keys = sorted(keys)
+
+        # Build mapping key -> index
+        key_to_idx = {k: i for i, k in enumerate(keys)}
+
+        # Initialize adjacency matrix
+        A = np.ones((len(keys), len(keys)), dtype=int)
+
+        # Fill adjacency by checking which variables appear together in a factor
+        for i in range(self.graph.size()):
+            factor = self.graph.at(i)
+            f_keys = list(factor.keys())
+            for a in range(len(f_keys)):
+                for b in range(a + 1, len(f_keys)):
+                    ia = key_to_idx[f_keys[a]]
+                    ib = key_to_idx[f_keys[b]]
+                    A[ia, ib] = 0
+                    A[ib, ia] = 0
+           
+        np.fill_diagonal(A, 0)
+
+        plt.figure(figsize=(4,4))
+        plt.imshow(A, cmap='gray', interpolation='none')
+        plt.xticks(range(len(keys)), [gtsam.DefaultKeyFormatter(k) for k in keys], rotation=45)
+        plt.yticks(range(len(keys)), [gtsam.DefaultKeyFormatter(k) for k in keys])
+        plt.title("Variable Connectivity Matrix (Reduced)")
+        plt.tight_layout()
+        plt.show()
+
 
 
 if __name__ == "__main__":
