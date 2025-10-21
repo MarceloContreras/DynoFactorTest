@@ -41,6 +41,9 @@ class Optimizer(object):
             np.array([0.3, 0.3, 0.3, 0.1, 0.1, 0.1])
         )
         self.model_point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+        self.model_motion_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+        )
 
         # Initial solution noise
         apply_noise = self.map.config["cam"]["noise"]["apply"]
@@ -100,6 +103,8 @@ class Optimizer(object):
 
         # Dynamic points
         if self.map.config["use_dynamic_points"]:
+            # TODO: Does it need a check of how many measurements 
+
             # Reprojection error
             for j, point in enumerate(self.map.car.points):
                 if len(point.obs) > 2:
@@ -111,7 +116,6 @@ class Optimizer(object):
                             partial(error_reprojection, [meas, K]),
                         )
                         self.graph.push_back(factor)
-                        self.poses_set.add(i)
                         if i in self.dynamic_landmark_dict:
                             self.dynamic_landmark_dict[i].append(j)
                         else:
@@ -119,34 +123,34 @@ class Optimizer(object):
 
             # Object factors
             for pose_id in self.dynamic_landmark_dict:
-                # Object smoother motion
-                if (pose_id + 1) in self.dynamic_landmark_dict.keys():
-                    for point_id in self.dynamic_landmark_dict[pose_id]:
-                        if (point_id + 1) in self.dynamic_landmark_dict[pose_id]:
-                            factor = gtsam.CustomFactor(
-                                self.model_point_noise,
-                                [
-                                    H(pose_id),
-                                    L(1000 * (pose_id + 1) + point_id),
-                                    L(1000 * (pose_id + 1) + point_id + 1),
-                                ],
-                                partial(error_object_motion),
-                            )
-                            self.graph.push_back(factor)
-
-                    # Object motion
-                    if (pose_id + 2) in self.dynamic_landmark_dict.keys():
-                        print(
-                            f"Making factor between {pose_id},{pose_id+1} and {pose_id+1},{pose_id+2}"
+                # 1. Object motion factor
+                # Makes sure there is motion
+                if not((pose_id + 1) in self.dynamic_landmark_dict.keys()):
+                    continue
+                for point_id in self.dynamic_landmark_dict[pose_id]:
+                    # Makes sure the same landmark is seen in two consecutive poses
+                    if (point_id) in self.dynamic_landmark_dict[pose_id+1]:
+                        factor = gtsam.CustomFactor(
+                            self.model_point_noise,
+                            [
+                                H(pose_id),
+                                L(1000 * (pose_id + 1) + point_id),
+                                L(1000 * (pose_id + 2) + point_id),
+                            ],
+                            partial(error_object_motion),
                         )
-                        factor = gtsam.BetweenFactorPose3(
-                            H(pose_id),
-                            H(pose_id + 1),
-                            Pose3.Identity(),
-                            self.model_pose_noise,
-                        )
-
                         self.graph.push_back(factor)
+
+                # 2. Object smoother motion
+                if (pose_id + 2) in self.dynamic_landmark_dict.keys():
+                    factor = gtsam.BetweenFactorPose3(
+                        H(pose_id),
+                        H(pose_id + 1),
+                        Pose3.Identity(),
+                        self.model_motion_noise,
+                    )
+
+                    self.graph.push_back(factor)
 
         # 2. Adding priors
         # Add Prior factor
@@ -202,7 +206,6 @@ class Optimizer(object):
 
         if self.map.config["use_dynamic_points"]:
             for pose_id in self.dynamic_landmark_dict:
-                # TODO: Should I verify if the factor actually exist?
                 for point_id in self.dynamic_landmark_dict[pose_id]:
                     pts = self.map.car.points[point_id].hist_pts[pose_id]
                     pts += self.point_noise * rng.standard_normal(3)
@@ -217,6 +220,7 @@ class Optimizer(object):
                     transformed_motion = motion.retract(
                         self.pose_noise * rng.standard_normal(6).reshape(6, 1)
                     )
+                    print(f"Motion{motion},perturbed{transformed_motion}")
                     self.initial_estimate.insert(H(pose_id), transformed_motion)
 
         self.initial_estimate.print("Initial Estimates:\n")
@@ -236,16 +240,20 @@ class Optimizer(object):
         print("Optimizing:")
         result = (
             optimizer.optimize()
-        )  # TODO FIX ME: CheiralityException after including dynamic points and vehicle motion
+        ) 
         result.print("Final results:\n")
         print("initial error = {}".format(self.graph.error(self.initial_estimate)))
         print("final error = {}".format(self.graph.error(result)))
 
+        poses = gtsam.utilities.allPose3s(result)
+        for key in poses.keys():
+            print(f"Pose {gtsam.Symbol(key)},{poses.atPose3(key).inverse()}")
+
         marginals = Marginals(self.graph, result)
         # plot.plot_3d_points(1, result, marginals=marginals)
         plot.plot_trajectory(1, result, marginals=marginals, scale=5)
-        plot_trajectory_car(1, self.map.car.car_poses, scale=2)
-        plot_3d_points_car(1, self.map.car.pts)
+        # plot_trajectory_car(1, self.map.car.car_poses, scale=2)
+        # plot_3d_points_car(1, self.map.car.pts)
         plot.set_axes_equal(1)
         plt.show()
 
