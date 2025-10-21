@@ -34,7 +34,7 @@ class Optimizer(object):
         self.landmark_set = None
         self.dynamic_landmark_set = None
 
-        # GTSAM noises
+        # GTSAM model noises
         self.model_meas_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
         self.model_pose_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.3, 0.3, 0.3, 0.1, 0.1, 0.1])
@@ -45,14 +45,29 @@ class Optimizer(object):
         )
 
         # Initial solution noise
-        apply_noise = self.map.config["cam"]["noise"]["apply"]
-        if apply_noise:
-            self.obs_noise = self.map.config["cam"]["noise"]["obs_noise"]
-            self.pose_noise = self.map.config["cam"]["noise"]["pose_noise"]
-            self.point_noise = self.map.config["cam"]["noise"]["point_noise"]
+        cam_apply_noise = self.map.config["cam"]["noise"]["apply"]
+        if cam_apply_noise:
+            self.cam_obs_noise = self.map.config["cam"]["noise"]["obs_noise"]
+            self.cam_pose_noise = self.map.config["cam"]["noise"]["pose_noise"]
+            self.cam_point_noise = self.map.config["cam"]["noise"]["point_noise"]
+        else:
+            self.cam_obs_noise = 0
+            self.cam_pose_noise = 0
+            self.cam_point_noise = 0
+        obj_apply_noise = self.map.config["car"]["noise"]["apply"]
+        if obj_apply_noise:
+            self.obj_pose_noise = self.map.config["car"]["noise"]["pose_noise"]
+            self.obj_point_noise = self.map.config["car"]["noise"]["point_noise"]
+            self.obj_motion_noise = self.map.config["car"]["noise"]["motion_noise"]
+        else:
+            self.obj_obs_noise = 0
+            self.obj_pose_noise = 0
+            self.obj_point_noise = 0
+            self.obj_motion_noise = 0
 
         self.graph = None
         self.initial_estimate = None
+        self.ground_truth = None
         self.huber_loss = gtsam.noiseModel.mEstimator.Huber(2.432)
 
     def setup_camera(self):
@@ -179,33 +194,40 @@ class Optimizer(object):
 
         # 3. Store initial solution
         self.initial_estimate = Values()
+        self.ground_truth = Values()
         rng = np.random.default_rng()
 
         for pose_id in self.poses_set:
             pose = self.map.cam_poses[pose_id]
             transformed_pose = pose.retract(
-                self.pose_noise * rng.standard_normal(6).reshape(6, 1)
+                self.cam_pose_noise * rng.standard_normal(6).reshape(6, 1)
             )
             self.initial_estimate.insert(X(pose_id), transformed_pose)
+            self.ground_truth.insert(X(pose_id), pose)
 
         for pose_id in self.constant_pose_set:
             pose = self.map.cam_poses[pose_id]
             transformed_pose = pose.retract(
-                self.pose_noise * rng.standard_normal(6).reshape(6, 1)
+                self.cam_pose_noise * rng.standard_normal(6).reshape(6, 1)
             )
             self.initial_estimate.insert(X(pose_id), transformed_pose)
+            self.ground_truth.insert(X(pose_id), pose)
 
         for point_id in self.static_landmark_set:
             transformed_point = self.map.pts[
                 point_id
-            ] + self.point_noise * rng.standard_normal(3)
+            ] + self.cam_point_noise * rng.standard_normal(3)
             self.initial_estimate.insert(L(point_id), Point3(transformed_point))
+            self.ground_truth.insert(L(point_id), Point3(self.map.pts[point_id]))
 
         if self.map.config["use_dynamic_points"]:
             for pose_id in self.dynamic_landmark_dict:
                 for point_id in self.dynamic_landmark_dict[pose_id]:
                     pts = self.map.car.points[point_id].hist_pts[pose_id]
-                    pts += self.point_noise * rng.standard_normal(3)
+                    self.ground_truth.insert(
+                        L(1000 * (pose_id + 1) + point_id), Point3(pts)
+                    )
+                    pts += self.obj_point_noise * rng.standard_normal(3)
                     self.initial_estimate.insert(
                         L(1000 * (pose_id + 1) + point_id), Point3(pts)
                     )
@@ -215,14 +237,15 @@ class Optimizer(object):
                     pose2 = self.map.car.car_poses[pose_id + 1]
                     motion = pose2 * pose1.inverse()
                     transformed_motion = motion.retract(
-                        self.pose_noise * rng.standard_normal(6).reshape(6, 1)
+                        self.obj_motion_noise * rng.standard_normal(6).reshape(6, 1)
                     )
                     self.initial_estimate.insert(H(pose_id), transformed_motion)
+                    self.ground_truth.insert(H(pose_id), motion)
 
     def run(self):
         self.setup_camera()
 
-        plotting.plot_hessian_matrix(self.graph)
+        # plotting.plot_hessian_matrix(self.graph)
 
         # Optimize the graph and print results
         params = gtsam.LevenbergMarquardtParams()
@@ -237,20 +260,20 @@ class Optimizer(object):
         print("initial error = {}".format(self.graph.error(self.initial_estimate)))
         print("final error = {}".format(self.graph.error(result)))
 
-        poses = gtsam.utilities.allPose3s(result)
-        motions = []
-        for key in poses.keys():
-            if "h" in str(gtsam.Symbol(key)):
-                print(f"Pose {gtsam.Symbol(key)},{poses.atPose3(key).inverse()}")
-                motions.append(poses.atPose3(key).inverse())
-
+        # Results
         marginals = Marginals(self.graph, result)
         plotting.plot_trajectory_camera(1, result, marginals=marginals, scale=5)
-        plotting.plot_trajectory_car_per_motion(
-            1, self.map.car.car_poses[0], result, marginals=marginals, scale=2
-        )
+        if self.map.config["use_dynamic_points"]:
+            plotting.plot_trajectory_car_per_motion(
+                1, self.map.car.car_poses[0], result, marginals=marginals, scale=2
+            )
         # plot.plot_3d_points(1, result, marginals=marginals)
         # plotting.plot_3d_points_car(1, self.map.car.pts)
+
+        plotting.plot_results_vs_gt(
+            result, self.ground_truth, title="Cam states vs GT."
+        )
+
         plot.set_axes_equal(1)
         plt.show()
 

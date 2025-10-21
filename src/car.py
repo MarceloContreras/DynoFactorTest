@@ -33,12 +33,6 @@ class Car(object):
         self.x, self.y, self.theta = -10, -10, np.pi / 2
 
         self.T_bc = np.array(config["car"]["T_bc"])
-
-        self.apply_noise = config["car"]["noise"]["apply"]
-        if self.apply_noise:
-            self.pose_noise = config["car"]["noise"]["pose_noise"]
-            self.point_noise = config["car"]["noise"]["point_noise"]
-
         self.simulate()
 
     def generateTraj(self):

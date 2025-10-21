@@ -26,12 +26,6 @@ class Map(object):
         self.n_points = config["cam"]["simulation"]["n_points"]
         self.n_obs = config["cam"]["simulation"]["n_obs"]
 
-        self.apply_noise = config["cam"]["noise"]["apply"]
-        if self.apply_noise:
-            self.obs_noise = config["cam"]["noise"]["obs_noise"]
-            self.pose_noise = config["cam"]["noise"]["pose_noise"]
-            self.point_noise = config["cam"]["noise"]["point_noise"]
-
         self.pts = None
         self.points = None
         self.cam_poses = None
