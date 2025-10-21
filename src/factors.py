@@ -87,7 +87,7 @@ def error_object_pose(
         prev_point: gtsam.Point3,
         curr_points: gtsam.Point3,
     ):
-        return curr_points - (curr_pose * prev_pose.inverse()) * prev_point
+        return curr_points - (curr_pose * prev_pose.inverse()).transformTo(prev_point)
 
     pose1_key, pose2_key, point1_key, point2_key = this.keys()
 
@@ -113,11 +113,11 @@ def error_object_pose_smoother(
     jacobians: Optional[List[np.ndarray]],
 ) -> np.ndarray:
     def h(pose1: gtsam.Pose3, pose2: gtsam.Pose3, pose3: gtsam.Pose3):
-        k_2_H_k_1 = pose1 * pose2.inverse()
-        k_1_H_k = pose2 * pose3.inverse()
-        hx = gtsam.Pose3.between(k_2_H_k_1, k_1_H_k)
-        Z = gtsam.Pose3.Identity()
-        return gtsam.Pose3.localCoordinates(Z, hx)
+        k_1_H_k = pose2 * pose1.inverse()
+        k_2_H_k_1 = pose3 * pose2.inverse()
+        hx = gtsam.Pose3.between(k_1_H_k, k_2_H_k_1)
+        I = gtsam.Pose3.Identity()
+        return gtsam.Pose3.localCoordinates(I, hx)
 
     pose1_key, pose2_key, pose3_key = this.keys()
 
@@ -128,9 +128,8 @@ def error_object_pose_smoother(
     error = h(pose1, pose2, pose3)
 
     if jacobians is not None:
-        jacobians[0] = numericalDerivative41(h, pose1, pose2, pose3)
-        jacobians[1] = numericalDerivative42(h, pose1, pose2, pose3)
-        jacobians[2] = numericalDerivative43(h, pose1, pose2, pose3)
-        jacobians[3] = numericalDerivative44(h, pose1, pose2, pose3)
+        jacobians[0] = numericalDerivative31(h, pose1, pose2, pose3)
+        jacobians[1] = numericalDerivative32(h, pose1, pose2, pose3)
+        jacobians[2] = numericalDerivative33(h, pose1, pose2, pose3)
 
     return error
