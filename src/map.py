@@ -1,10 +1,8 @@
-import gtsam
 import numpy as np
 import matplotlib.pyplot as plt
 
-
-from utils import plotPath, posesOnCircle
 from car import Car
+from utils import posesOnCircle
 
 
 class MapPoint(object):

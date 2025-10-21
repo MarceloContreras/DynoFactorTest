@@ -2,9 +2,7 @@ import numpy as np
 import gtsam
 import matplotlib.pyplot as plt
 
-
 from map import Map
-from utils import plot_trajectory_car, plot_3d_points_car
 from gtsam.utils import plot
 from gtsam import symbol_shorthand
 from gtsam import (
@@ -19,8 +17,12 @@ from gtsam import (
     Marginals,
 )
 from functools import partial
-from factors import error_reprojection, error_object_motion, \
-                    error_object_pose, error_object_pose_smoother
+from factors import (
+    error_reprojection,
+    error_object_motion,
+    error_object_pose,
+    error_object_pose_smoother,
+)
 
 L = symbol_shorthand.L  # Static and dynamic landmark
 X = symbol_shorthand.X  # Camera pose
@@ -74,11 +76,10 @@ class Optimizer(object):
         self.static_landmark_set = set()
         self.dynamic_landmark_dict = dict()
 
-
         # 1. Add measurements
-        # First construct the covisibility graph for each pose 
+        # First construct the covisibility graph for each pose
         for j, point in enumerate(self.map.points):
-            if len(point.obs) > 2: 
+            if len(point.obs) > 2:
                 for i in point.obs:
                     if i in self.static_pose_landmark_dict:
                         self.static_pose_landmark_dict[i].append(j)
@@ -97,7 +98,7 @@ class Optimizer(object):
                 )
                 self.graph.push_back(factor)
                 self.static_landmark_set.add(point_id)
-                if (len(self.static_pose_landmark_dict[pose_id])<3):
+                if len(self.static_pose_landmark_dict[pose_id]) < 3:
                     self.constant_pose_set.add(pose_id)
                 else:
                     self.poses_set.add(pose_id)
@@ -124,11 +125,11 @@ class Optimizer(object):
             for pose_id in self.dynamic_landmark_dict:
                 # 1. Object motion factor
                 # Makes sure there is motion
-                if not((pose_id + 1) in self.dynamic_landmark_dict.keys()):
+                if not ((pose_id + 1) in self.dynamic_landmark_dict.keys()):
                     continue
                 for point_id in self.dynamic_landmark_dict[pose_id]:
                     # Makes sure the same landmark is seen in two consecutive poses
-                    if (point_id) in self.dynamic_landmark_dict[pose_id+1]:
+                    if (point_id) in self.dynamic_landmark_dict[pose_id + 1]:
                         factor = gtsam.CustomFactor(
                             self.model_point_noise,
                             [
@@ -145,11 +146,7 @@ class Optimizer(object):
                 if (pose_id + 2) in self.dynamic_landmark_dict.keys():
                     factor = gtsam.CustomFactor(
                         self.model_pose_noise,
-                        [
-                            O(pose_id),
-                            O(pose_id + 1),
-                            O(pose_id + 2)
-                        ],
+                        [O(pose_id), O(pose_id + 1), O(pose_id + 2)],
                         partial(error_object_pose_smoother),
                     )
                     self.graph.push_back(factor)
@@ -171,7 +168,7 @@ class Optimizer(object):
                 self.model_pose_noise,
             )
             self.graph.push_back(prior_pose)
-    
+
         # Set prior to avoid gauge freedom
         first_point_id = next(iter(self.static_landmark_set))
         prior_landmark = PriorFactorPoint3(
@@ -236,9 +233,7 @@ class Optimizer(object):
             self.graph, self.initial_estimate, params
         )
         print("Optimizing:")
-        result = (
-            optimizer.optimize()
-        ) 
+        result = optimizer.optimize()
         result.print("Final results:\n")
         print("initial error = {}".format(self.graph.error(self.initial_estimate)))
         print("final error = {}".format(self.graph.error(result)))
@@ -279,17 +274,18 @@ class Optimizer(object):
                     ib = key_to_idx[f_keys[b]]
                     A[ia, ib] = 0
                     A[ib, ia] = 0
-           
+
         np.fill_diagonal(A, 0)
 
-        plt.figure(figsize=(4,4))
-        plt.imshow(A, cmap='gray', interpolation='none')
-        plt.xticks(range(len(keys)), [gtsam.DefaultKeyFormatter(k) for k in keys], rotation=45)
+        plt.figure(figsize=(4, 4))
+        plt.imshow(A, cmap="gray", interpolation="none")
+        plt.xticks(
+            range(len(keys)), [gtsam.DefaultKeyFormatter(k) for k in keys], rotation=45
+        )
         plt.yticks(range(len(keys)), [gtsam.DefaultKeyFormatter(k) for k in keys])
         plt.title("Variable Connectivity Matrix (Reduced)")
         plt.tight_layout()
         plt.show()
-
 
 
 if __name__ == "__main__":

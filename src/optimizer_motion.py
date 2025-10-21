@@ -1,10 +1,9 @@
-import numpy as np
 import gtsam
+import plotting
+import numpy as np
 import matplotlib.pyplot as plt
 
-
 from map import Map
-from utils import plot_trajectory_car, plot_3d_points_car
 from gtsam.utils import plot
 from gtsam import symbol_shorthand
 from gtsam import (
@@ -73,11 +72,10 @@ class Optimizer(object):
         self.static_landmark_set = set()
         self.dynamic_landmark_dict = dict()
 
-
         # 1. Add measurements
-        # First construct the covisibility graph for each pose 
+        # First construct the covisibility graph for each pose
         for j, point in enumerate(self.map.points):
-            if len(point.obs) > 2: 
+            if len(point.obs) > 2:
                 for i in point.obs:
                     if i in self.static_pose_landmark_dict:
                         self.static_pose_landmark_dict[i].append(j)
@@ -96,15 +94,14 @@ class Optimizer(object):
                 )
                 self.graph.push_back(factor)
                 self.static_landmark_set.add(point_id)
-                if (len(self.static_pose_landmark_dict[pose_id])<3):
+                if len(self.static_pose_landmark_dict[pose_id]) < 3:
                     self.constant_pose_set.add(pose_id)
                 else:
                     self.poses_set.add(pose_id)
 
         # Dynamic points
         if self.map.config["use_dynamic_points"]:
-            # TODO: Does it need a check of how many measurements 
-
+            # TODO: Does it need a check of how many measurements
             # Reprojection error
             for j, point in enumerate(self.map.car.points):
                 if len(point.obs) > 2:
@@ -125,11 +122,11 @@ class Optimizer(object):
             for pose_id in self.dynamic_landmark_dict:
                 # 1. Object motion factor
                 # Makes sure there is motion
-                if not((pose_id + 1) in self.dynamic_landmark_dict.keys()):
+                if not ((pose_id + 1) in self.dynamic_landmark_dict.keys()):
                     continue
                 for point_id in self.dynamic_landmark_dict[pose_id]:
                     # Makes sure the same landmark is seen in two consecutive poses
-                    if (point_id) in self.dynamic_landmark_dict[pose_id+1]:
+                    if (point_id) in self.dynamic_landmark_dict[pose_id + 1]:
                         factor = gtsam.CustomFactor(
                             self.model_point_noise,
                             [
@@ -169,7 +166,7 @@ class Optimizer(object):
                 self.model_pose_noise,
             )
             self.graph.push_back(prior_pose)
-    
+
         # Set prior to avoid gauge freedom
         first_point_id = next(iter(self.static_landmark_set))
         prior_landmark = PriorFactorPoint3(
@@ -178,7 +175,7 @@ class Optimizer(object):
             self.model_point_noise,
         )
         self.graph.push_back(prior_landmark)
-        self.graph.print("Factor Graph:\n")
+        # self.graph.print("Factor Graph:\n")
 
         # 3. Store initial solution
         self.initial_estimate = Values()
@@ -220,15 +217,12 @@ class Optimizer(object):
                     transformed_motion = motion.retract(
                         self.pose_noise * rng.standard_normal(6).reshape(6, 1)
                     )
-                    print(f"Motion{motion},perturbed{transformed_motion}")
                     self.initial_estimate.insert(H(pose_id), transformed_motion)
-
-        self.initial_estimate.print("Initial Estimates:\n")
 
     def run(self):
         self.setup_camera()
 
-        self.plot_hessian_matrix()
+        plotting.plot_hessian_matrix(self.graph)
 
         # Optimize the graph and print results
         params = gtsam.LevenbergMarquardtParams()
@@ -238,60 +232,27 @@ class Optimizer(object):
             self.graph, self.initial_estimate, params
         )
         print("Optimizing:")
-        result = (
-            optimizer.optimize()
-        ) 
-        result.print("Final results:\n")
+        result = optimizer.optimize()
+        # result.print("Final results:\n")
         print("initial error = {}".format(self.graph.error(self.initial_estimate)))
         print("final error = {}".format(self.graph.error(result)))
 
         poses = gtsam.utilities.allPose3s(result)
+        motions = []
         for key in poses.keys():
-            print(f"Pose {gtsam.Symbol(key)},{poses.atPose3(key).inverse()}")
+            if "h" in str(gtsam.Symbol(key)):
+                print(f"Pose {gtsam.Symbol(key)},{poses.atPose3(key).inverse()}")
+                motions.append(poses.atPose3(key).inverse())
 
         marginals = Marginals(self.graph, result)
+        plotting.plot_trajectory_camera(1, result, marginals=marginals, scale=5)
+        plotting.plot_trajectory_car_per_motion(
+            1, self.map.car.car_poses[0], result, marginals=marginals, scale=2
+        )
         # plot.plot_3d_points(1, result, marginals=marginals)
-        plot.plot_trajectory(1, result, marginals=marginals, scale=5)
-        # plot_trajectory_car(1, self.map.car.car_poses, scale=2)
-        # plot_3d_points_car(1, self.map.car.pts)
+        # plotting.plot_3d_points_car(1, self.map.car.pts)
         plot.set_axes_equal(1)
         plt.show()
-
-    def plot_hessian_matrix(self):
-        keys = set()
-        for i in range(self.graph.size()):
-            factor = self.graph.at(i)
-            for k in factor.keys():
-                keys.add(k)
-        keys = sorted(keys)
-
-        # Build mapping key -> index
-        key_to_idx = {k: i for i, k in enumerate(keys)}
-
-        # Initialize adjacency matrix
-        A = np.ones((len(keys), len(keys)), dtype=int)
-
-        # Fill adjacency by checking which variables appear together in a factor
-        for i in range(self.graph.size()):
-            factor = self.graph.at(i)
-            f_keys = list(factor.keys())
-            for a in range(len(f_keys)):
-                for b in range(a + 1, len(f_keys)):
-                    ia = key_to_idx[f_keys[a]]
-                    ib = key_to_idx[f_keys[b]]
-                    A[ia, ib] = 0
-                    A[ib, ia] = 0
-           
-        np.fill_diagonal(A, 0)
-
-        plt.figure(figsize=(4,4))
-        plt.imshow(A, cmap='gray', interpolation='none')
-        plt.xticks(range(len(keys)), [gtsam.DefaultKeyFormatter(k) for k in keys], rotation=45)
-        plt.yticks(range(len(keys)), [gtsam.DefaultKeyFormatter(k) for k in keys])
-        plt.title("Variable Connectivity Matrix (Reduced)")
-        plt.tight_layout()
-        plt.show()
-
 
 
 if __name__ == "__main__":

@@ -1,68 +1,14 @@
+import gtsam
 import numpy as np
 import matplotlib.pyplot as plt
 
-from typing import List
+from gtsam.utils import plot
+from typing import List, Iterable
 from gtsam import Point3, Pose3, Rot3
 
-from typing import Iterable, Optional, Tuple
-
-import gtsam
-from gtsam import Marginals, Point3, Pose3, Values
-from gtsam.utils import plot
 
 _M_PI_2 = np.pi / 2
 _M_PI_4 = np.pi / 4
-
-
-def plotPath(
-    trajectory,
-    orientations,
-    ax,
-    label="Path",
-    color="blue",
-    linewidth=2,
-    axis_length=0.1,
-    axis_step=1,
-    no_legend=False,
-):
-    """
-    Plots a 3D trajectory with orientation axes.
-    """
-    # Plot trajectory
-    ax.plot(
-        trajectory[:, 0],
-        trajectory[:, 1],
-        trajectory[:, 2],
-        label=label,
-        color=color,
-        linewidth=linewidth,
-    )
-
-    # Plot orientation axes
-    for i in range(0, len(trajectory), axis_step):
-        pos = trajectory[i]
-        R = orientations[i]  # 3x3 rotation matrix
-
-        # Plot local X, Y, Z axes
-        for j, color in enumerate(["r", "g", "b"]):  # X=Red, Y=Green, Z=Blue
-            axis_vector = R[:, j] * axis_length
-            ax.quiver(
-                pos[0],
-                pos[1],
-                pos[2],
-                axis_vector[0],
-                axis_vector[1],
-                axis_vector[2],
-                color=color,
-            )
-
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_title("3D Trajectory with Orientation Axes")
-    if not (no_legend):
-        ax.legend()
-    ax.set_box_aspect([1, 1, 1])  # Equal aspect ratio
 
 
 def createPoses(
@@ -134,28 +80,5 @@ def plot_trajectory_car(
         covariance = None
         plot.plot_pose3_on_axes(axes, pose, P=covariance, axis_length=scale)
 
-    fig.suptitle(title)
-    fig.canvas.manager.set_window_title(title.lower())
-
-
-def plot_3d_points_car(
-    fignum,
-    points: np.ndarray,
-    linespec="g*",
-    marginals=None,
-    title="3D Points",
-    axis_labels=("X axis", "Y axis", "Z axis"),
-):
-
-    # Plot points and covariance matrices
-    timestamp = points.shape[0]
-
-    for t in range(timestamp):
-        for pt in points[t]:
-            fig = plot.plot_point3(
-                fignum, Point3(pt), linespec, None, axis_labels=axis_labels
-            )
-
-    fig = plt.figure(fignum)
     fig.suptitle(title)
     fig.canvas.manager.set_window_title(title.lower())
