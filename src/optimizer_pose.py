@@ -182,7 +182,7 @@ class Optimizer(object):
             self.model_point_noise,
         )
         self.graph.push_back(prior_landmark)
-        
+
         if self.map.config["use_dynamic_points"]:
             # Fix to gauge freedom: also fix the first object pose
             first_point_id = 0

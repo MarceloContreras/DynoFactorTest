@@ -145,6 +145,7 @@ def plot_trajectory_car_per_motion(
     fig.suptitle(title)
     fig.canvas.manager.set_window_title(title.lower())
 
+
 def plot_trajectory_car_per_pose(
     fignum: int,
     values: Values,
@@ -185,6 +186,7 @@ def plot_trajectory_car_per_pose(
 
     fig.suptitle(title)
     fig.canvas.manager.set_window_title(title.lower())
+
 
 def plot_3d_points_car(
     fignum,
@@ -342,6 +344,7 @@ def plot_results_vs_gt(
     fig.suptitle(title)
     fig.canvas.manager.set_window_title(title.lower())
 
+
 def plot_graph_connectivity(graph, values):
     G = nx.Graph()
 
@@ -388,12 +391,12 @@ def plot_graph_connectivity(graph, values):
     plt.figure(figsize=(6, 4))
     nx.draw(
         G,
-        pos=positions,           # <--- use positions from GTSAM
+        pos=positions,  # <--- use positions from GTSAM
         labels=labels,
         node_color=list(colors.values()),
         node_size=2000,
         font_size=9,
-        font_weight='bold'
+        font_weight="bold",
     )
     plt.title("GTSAM Graph positioned using Pose3 / Point3 locations")
     plt.axis("equal")
