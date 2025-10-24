@@ -76,6 +76,7 @@ class Optimizer(object):
         self.static_pose_landmark_dict = dict()
         self.static_landmark_set = set()
         self.dynamic_landmark_dict = dict()
+        self.dynamic_landmark_set = set()
 
         # 1. Add measurements
         # First construct the covisibility graph for each pose
@@ -111,13 +112,6 @@ class Optimizer(object):
                 if len(point.obs) < 2:
                     continue
                 for i in point.obs:
-                    meas = point.obs[i]
-                    factor = gtsam.CustomFactor(
-                        self.model_meas_noise,
-                        [X(i), L(1000 * (i + 1) + j)],
-                        partial(error_reprojection, [meas, K]),
-                    )
-                    self.graph.push_back(factor)
                     if i in self.dynamic_landmark_dict:
                         self.dynamic_landmark_dict[i].append(j)
                     else:
@@ -146,6 +140,25 @@ class Optimizer(object):
                             partial(error_object_pose),
                         )
                         self.graph.push_back(factor)
+
+                        meas = self.map.car.points[point_id].obs[pose_id]
+                        factor = gtsam.CustomFactor(
+                            self.model_meas_noise,
+                            [X(pose_id), L(1000 * (pose_id + 1) + point_id)],
+                            partial(error_reprojection, [meas, K]),
+                        )
+                        self.graph.push_back(factor)
+
+                        meas = self.map.car.points[point_id].obs[pose_id + 1]
+                        factor = gtsam.CustomFactor(
+                            self.model_meas_noise,
+                            [X(pose_id + 1), L(1000 * (pose_id + 2) + point_id)],
+                            partial(error_reprojection, [meas, K]),
+                        )
+                        self.graph.push_back(factor)
+
+                        self.dynamic_landmark_set.add((pose_id, point_id))
+                        self.dynamic_landmark_set.add((pose_id + 1, point_id))
 
                 # 2. Object smoother motion
                 if (pose_id + 2) in self.dynamic_landmark_dict.keys():
@@ -193,7 +206,7 @@ class Optimizer(object):
             )
             self.graph.push_back(prior_pose)
 
-        self.graph.print("Factor Graph:\n")
+        # self.graph.print("Factor Graph:\n")
 
         # 3. Store initial solution
         self.initial_estimate = Values()
@@ -220,22 +233,25 @@ class Optimizer(object):
             self.initial_estimate.insert(L(point_id), Point3(transformed_point))
 
         if self.map.config["use_dynamic_points"]:
+            # Dynamic landmark initialization
+            for (pose_id, point_id) in self.dynamic_landmark_set:
+                pts = self.map.car.points[point_id].hist_pts[pose_id]
+                pts += self.point_noise * rng.standard_normal(3)
+                self.initial_estimate.insert(
+                    L(1000 * (pose_id + 1) + point_id), Point3(pts)
+                )
             for pose_id in self.dynamic_landmark_dict:
-                # Dynamic landmark initialization
-                for point_id in self.dynamic_landmark_dict[pose_id]:
-                    pts = self.map.car.points[point_id].hist_pts[pose_id]
-                    pts += self.point_noise * rng.standard_normal(3)
-                    self.initial_estimate.insert(
-                        L(1000 * (pose_id + 1) + point_id), Point3(pts)
-                    )
-                # Vehicle pose initiallation
                 pose = self.map.car.car_poses[pose_id]
                 transformed_motion = pose.retract(
                     self.pose_noise * rng.standard_normal(6).reshape(6, 1)
                 )
                 self.initial_estimate.insert(O(pose_id), transformed_motion)
 
-        self.initial_estimate.print("Initial Estimates:\n")
+        # self.initial_estimate.print("Initial Estimates:\n")
+
+        # for i in range(self.graph.size()):
+        #     factor = self.graph.at(i)
+        #     print("Factor", i, "involves keys:", [gtsam.DefaultKeyFormatter(k) for k in factor.keys()])
 
     def run(self):
         self.setup_camera()
