@@ -1,5 +1,6 @@
 import gtsam
 import numpy as np
+import networkx as nx
 import matplotlib.pyplot as plt
 
 from typing import Iterable
@@ -144,6 +145,46 @@ def plot_trajectory_car_per_motion(
     fig.suptitle(title)
     fig.canvas.manager.set_window_title(title.lower())
 
+def plot_trajectory_car_per_pose(
+    fignum: int,
+    values: Values,
+    scale: float = 1,
+    marginals: Marginals = None,
+    apply_inverse: bool = True,
+    ground_truth: bool = False,
+    object_symbol: str = "o",
+    title: str = "Plot Trajectory",
+    axis_labels: Iterable[str] = ("X axis", "Y axis", "Z axis"),
+) -> None:
+
+    fig = plt.figure(fignum)
+    if not fig.axes:
+        axes = fig.add_subplot(projection="3d")
+    else:
+        axes = fig.axes[0]
+
+    axes.set_xlabel(axis_labels[0])
+    axes.set_ylabel(axis_labels[1])
+    axes.set_zlabel(axis_labels[2])
+
+    poses = gtsam.utilities.allPose3s(values)
+    for key in poses.keys():
+        if object_symbol in str(gtsam.Symbol(key)):
+            O = poses.atPose3(key)
+            if apply_inverse:
+                pose = O.inverse()
+            else:
+                pose = O
+            if marginals:
+                covariance = marginals.marginalCovariance(key)
+            else:
+                covariance = None
+            plot_pose3_on_axes(
+                axes, pose, P=covariance, axis_length=scale, ground_truth=ground_truth
+            )
+
+    fig.suptitle(title)
+    fig.canvas.manager.set_window_title(title.lower())
 
 def plot_3d_points_car(
     fignum,
@@ -300,3 +341,60 @@ def plot_results_vs_gt(
 
     fig.suptitle(title)
     fig.canvas.manager.set_window_title(title.lower())
+
+def plot_graph_connectivity(graph, values):
+    G = nx.Graph()
+
+    # Iterate properly over all factors
+    for i in range(graph.size()):
+        factor = graph.at(i)
+        keys = list(factor.keys())  # <-- Correct method in Python
+        for a in range(len(keys)):
+            for b in range(a + 1, len(keys)):
+                G.add_edge(keys[a], keys[b])
+
+    # ------------------------------
+    # 4. Labels and colors
+    # ------------------------------
+    labels = {}
+    colors = {}
+    positions = {}
+
+    for k in G.nodes():
+        if values.exists(k):
+            try:
+                pose = values.atPose3(k)
+                t = pose.translation()
+                positions[k] = (t[0], t[1])  # use x, y for 2D plot
+                labels[k] = f"{gtsam.DefaultKeyFormatter(k)}\n(Pose3)"
+                colors[k] = "skyblue"
+            except RuntimeError:
+                try:
+                    p = values.atPoint3(k)
+                    positions[k] = (p[0], p[1])
+                    labels[k] = f"{gtsam.DefaultKeyFormatter(k)}\n(Point3)"
+                    colors[k] = "lightcoral"
+                except RuntimeError:
+                    labels[k] = f"{gtsam.DefaultKeyFormatter(k)}\n(?)"
+                    colors[k] = "gray"
+        else:
+            labels[k] = f"{gtsam.DefaultKeyFormatter(k)}\n(unknown)"
+            colors[k] = "gray"
+            positions[k] = (0, 0)
+
+    # ------------------------------
+    # 5. Plot
+    # ------------------------------
+    plt.figure(figsize=(6, 4))
+    nx.draw(
+        G,
+        pos=positions,           # <--- use positions from GTSAM
+        labels=labels,
+        node_color=list(colors.values()),
+        node_size=2000,
+        font_size=9,
+        font_weight='bold'
+    )
+    plt.title("GTSAM Graph positioned using Pose3 / Point3 locations")
+    plt.axis("equal")
+    plt.show()

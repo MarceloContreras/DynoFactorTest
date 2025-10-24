@@ -1,5 +1,6 @@
 import numpy as np
 import gtsam
+import plotting
 import matplotlib.pyplot as plt
 
 from map import Map
@@ -107,22 +108,26 @@ class Optimizer(object):
         if self.map.config["use_dynamic_points"]:
             # Reprojection error
             for j, point in enumerate(self.map.car.points):
-                if len(point.obs) > 2:
-                    for i in point.obs:
-                        meas = point.obs[i]
-                        factor = gtsam.CustomFactor(
-                            self.model_meas_noise,
-                            [X(i), L(1000 * (i + 1) + j)],
-                            partial(error_reprojection, [meas, K]),
-                        )
-                        self.graph.push_back(factor)
-                        if i in self.dynamic_landmark_dict:
-                            self.dynamic_landmark_dict[i].append(j)
-                        else:
-                            self.dynamic_landmark_dict[i] = [j]
+                if len(point.obs) < 2:
+                    continue
+                for i in point.obs:
+                    meas = point.obs[i]
+                    factor = gtsam.CustomFactor(
+                        self.model_meas_noise,
+                        [X(i), L(1000 * (i + 1) + j)],
+                        partial(error_reprojection, [meas, K]),
+                    )
+                    self.graph.push_back(factor)
+                    if i in self.dynamic_landmark_dict:
+                        self.dynamic_landmark_dict[i].append(j)
+                    else:
+                        self.dynamic_landmark_dict[i] = [j]
 
             # Object factors
             for pose_id in self.dynamic_landmark_dict:
+                #! When a landmark is not seen by any of the object pose
+                #! do not add it to the factor graph, if add it as a reprojection
+                #! factor it will fail during linearization
                 # 1. Object motion factor
                 # Makes sure there is motion
                 if not ((pose_id + 1) in self.dynamic_landmark_dict.keys()):
@@ -177,6 +182,17 @@ class Optimizer(object):
             self.model_point_noise,
         )
         self.graph.push_back(prior_landmark)
+        
+        if self.map.config["use_dynamic_points"]:
+            # Fix to gauge freedom: also fix the first object pose
+            first_point_id = 0
+            prior_pose = PriorFactorPose3(
+                O(first_pose_id),
+                Pose3(self.map.car.car_poses[first_pose_id]),
+                self.model_pose_noise,
+            )
+            self.graph.push_back(prior_pose)
+
         self.graph.print("Factor Graph:\n")
 
         # 3. Store initial solution
@@ -238,15 +254,14 @@ class Optimizer(object):
         print("initial error = {}".format(self.graph.error(self.initial_estimate)))
         print("final error = {}".format(self.graph.error(result)))
 
-        # poses = gtsam.utilities.allPose3s(result)
-        # for key in poses.keys():
-        #     print(f"Pose {gtsam.Symbol(key)},{poses.atPose3(key).inverse()}")
-
         marginals = Marginals(self.graph, result)
-        # plot.plot_3d_points(1, result, marginals=marginals)
-        plot.plot_trajectory(1, result, marginals=marginals, scale=5)
-        # plot_trajectory_car(1, self.map.car.car_poses, scale=2)
-        # plot_3d_points_car(1, self.map.car.pts)
+        plotting.plot_trajectory_camera(1, result, marginals=marginals, scale=5)
+        # TODO: Need to check the orientation and initial position
+        if self.map.config["use_dynamic_points"]:
+            plotting.plot_trajectory_car_per_pose(
+                1, result, marginals=marginals, scale=2
+            )
+
         plot.set_axes_equal(1)
         plt.show()
 

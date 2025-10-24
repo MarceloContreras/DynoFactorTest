@@ -32,7 +32,7 @@ cam:
     - [0,-1, 0, 0]
     - [0, 0, 0, 1]
   simulation:
-    n_points: 15
+    n_points: 20
     n_frames: 15
     n_obs: 3
   noise:
