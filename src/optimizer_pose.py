@@ -221,6 +221,7 @@ class Optimizer(object):
 
         if self.map.config["use_dynamic_points"]:
             for pose_id in self.dynamic_landmark_dict:
+                # Dynamic landmark initialization
                 for point_id in self.dynamic_landmark_dict[pose_id]:
                     pts = self.map.car.points[point_id].hist_pts[pose_id]
                     pts += self.point_noise * rng.standard_normal(3)

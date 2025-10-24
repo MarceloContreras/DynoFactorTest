@@ -246,7 +246,7 @@ class Optimizer(object):
         self.setup_camera()
 
         plotting.plot_hessian_matrix(self.graph)
-        plotting.plot_graph_connectivity(self.graph, self.initial_estimate)
+        # plotting.plot_graph_connectivity(self.graph, self.initial_estimate)
 
         # Optimize the graph and print results
         params = gtsam.LevenbergMarquardtParams()

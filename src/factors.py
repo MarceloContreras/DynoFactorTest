@@ -58,7 +58,7 @@ def error_object_motion(
     def h(
         object_motion: gtsam.Pose3, prev_point: gtsam.Point3, curr_point: gtsam.Point3
     ):
-        return curr_point - object_motion.transformTo(prev_point)
+        return curr_point - object_motion.transformFrom(prev_point)
 
     motion_key, point1_key, point2_key = this.keys()
 
@@ -87,7 +87,7 @@ def error_object_pose(
         prev_point: gtsam.Point3,
         curr_points: gtsam.Point3,
     ):
-        return curr_points - (curr_pose * prev_pose.inverse()).transformTo(prev_point)
+        return curr_points - (curr_pose * prev_pose.inverse()).transformFrom(prev_point)
 
     pose1_key, pose2_key, point1_key, point2_key = this.keys()
 
@@ -115,7 +115,7 @@ def error_object_pose_smoother(
     def h(pose1: gtsam.Pose3, pose2: gtsam.Pose3, pose3: gtsam.Pose3):
         k_1_H_k = pose2 * pose1.inverse()
         k_2_H_k_1 = pose3 * pose2.inverse()
-        hx = gtsam.Pose3.between(k_1_H_k, k_2_H_k_1)
+        hx = gtsam.Pose3.between(k_2_H_k_1, k_1_H_k)
         I = gtsam.Pose3.Identity()
         return gtsam.Pose3.localCoordinates(I, hx)
 

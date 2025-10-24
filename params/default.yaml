@@ -11,7 +11,7 @@ car:
     delta: -0.1
   simulation:
     n_points: 20
-    n_frames: 15
+    n_frames: 5
   noise:
     apply: true
     pose_noise: 0.1
@@ -33,7 +33,7 @@ cam:
     - [0, 0, 0, 1]
   simulation:
     n_points: 20
-    n_frames: 15
+    n_frames: 5
     n_obs: 3
   noise:
     apply: true

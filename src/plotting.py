@@ -130,10 +130,7 @@ def plot_trajectory_car_per_motion(
     for key in motions.keys():
         if motion_symbol in str(gtsam.Symbol(key)):
             H = motions.atPose3(key)
-            if apply_inverse:
-                pose = H.inverse().compose(pose)
-            else:
-                pose = H.compose(pose)
+            pose = H.compose(pose)
             if marginals:
                 covariance = marginals.marginalCovariance(key)
             else:
@@ -172,10 +169,7 @@ def plot_trajectory_car_per_pose(
     for key in poses.keys():
         if object_symbol in str(gtsam.Symbol(key)):
             O = poses.atPose3(key)
-            if apply_inverse:
-                pose = O.inverse()
-            else:
-                pose = O
+            pose = O
             if marginals:
                 covariance = marginals.marginalCovariance(key)
             else:
