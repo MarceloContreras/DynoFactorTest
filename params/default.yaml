@@ -38,7 +38,7 @@ cam:
   noise:
     apply: true
     obs_noise: 0.1
-    pose_noise: 0.3
-    point_noise: 0.5
+    pose_noise: 0.2
+    point_noise: 1.0
 
 use_dynamic_points: true

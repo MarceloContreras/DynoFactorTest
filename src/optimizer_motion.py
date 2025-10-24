@@ -199,17 +199,21 @@ class Optimizer(object):
 
         for pose_id in self.poses_set:
             pose = self.map.cam_poses[pose_id]
-            transformed_pose = pose.retract(
-                self.cam_pose_noise * rng.standard_normal(6).reshape(6, 1)
-            )
+            noise = self.cam_pose_noise * rng.standard_normal(6).reshape(6, 1)
+            noise[3] = 1.0
+            noise[4] = 1.0
+            noise[5] = 1.0
+            transformed_pose = pose.retract(noise)
             self.initial_estimate.insert(X(pose_id), transformed_pose)
             self.ground_truth.insert(X(pose_id), pose)
 
         for pose_id in self.constant_pose_set:
             pose = self.map.cam_poses[pose_id]
-            transformed_pose = pose.retract(
-                self.cam_pose_noise * rng.standard_normal(6).reshape(6, 1)
-            )
+            noise = self.cam_pose_noise * rng.standard_normal(6).reshape(6, 1)
+            noise[3] = 1.0
+            noise[4] = 1.0
+            noise[5] = 1.0
+            transformed_pose = pose.retract(noise)
             self.initial_estimate.insert(X(pose_id), transformed_pose)
             self.ground_truth.insert(X(pose_id), pose)
 
@@ -236,9 +240,11 @@ class Optimizer(object):
                     pose1 = self.map.car.car_poses[pose_id]
                     pose2 = self.map.car.car_poses[pose_id + 1]
                     motion = pose2 * pose1.inverse()
-                    transformed_motion = motion.retract(
-                        self.obj_motion_noise * rng.standard_normal(6).reshape(6, 1)
-                    )
+                    noise = self.cam_pose_noise * rng.standard_normal(6).reshape(6, 1)
+                    noise[3] = 0.25
+                    noise[4] = 0.25
+                    noise[5] = 0.25
+                    transformed_motion = motion.retract(noise)
                     self.initial_estimate.insert(H(pose_id), transformed_motion)
                     self.ground_truth.insert(H(pose_id), motion)
 
@@ -262,20 +268,43 @@ class Optimizer(object):
         print("final error = {}".format(self.graph.error(result)))
 
         # Results
-        marginals = Marginals(self.graph, result)
-        plotting.plot_trajectory_camera(1, result, marginals=marginals, scale=5)
+        plotting.plot_trajectory_camera(
+            1, self.initial_estimate, marginals=None, scale=5, title="Initial Values"
+        )
         if self.map.config["use_dynamic_points"]:
             plotting.plot_trajectory_car_per_motion(
-                1, self.map.car.car_poses[0], result, marginals=marginals, scale=2
+                1,
+                self.map.car.car_poses[0],
+                self.initial_estimate,
+                marginals=None,
+                scale=2,
+                title="Initial Values",
             )
-        # plot.plot_3d_points(1, result, marginals=marginals)
-        # plotting.plot_3d_points_car(1, self.map.car.pts)
+
+        marginals = Marginals(self.graph, result)
+        plotting.plot_trajectory_camera(
+            2, result, marginals=marginals, scale=5, title="Optimized Values"
+        )
+        if self.map.config["use_dynamic_points"]:
+            plotting.plot_trajectory_car_per_motion(
+                2,
+                self.map.car.car_poses[0],
+                result,
+                marginals=marginals,
+                scale=2,
+                title="Optimized Values",
+            )
 
         plotting.plot_results_vs_gt(
-            result, self.ground_truth, title="Cam states vs GT."
+            self.initial_estimate, self.ground_truth, title="Initial Cam states vs GT."
+        )
+
+        plotting.plot_results_vs_gt(
+            result, self.ground_truth, title="Optimized Cam states vs GT."
         )
 
         plot.set_axes_equal(1)
+        plot.set_axes_equal(2)
         plt.show()
 
 
